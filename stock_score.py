@@ -11,11 +11,11 @@ def is_market_open():
     is_dst = bool(now.dst())  # 서머타임 적용 여부
 
     if is_dst:
-        market_open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)  # 서머타임: 09:30 AM
-        market_close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)  # 서머타임: 04:00 PM
+        market_open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)  # 서머타임 적용 시: 09:30 AM
+        market_close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)  # 서머타임 적용 시: 04:00 PM
     else:
-        market_open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)  # 비서머타임: 09:30 AM
-        market_close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)  # 비서머타임: 04:00 PM
+        market_open_time = now.replace(hour=10, minute=30, second=0, microsecond=0)  # 서머타임: 10:30 AM
+        market_close_time = now.replace(hour=17, minute=0, second=0, microsecond=0)  # 서머타임: 05:00 PM
 
     if market_open_time <= now <= market_close_time:
         return True
