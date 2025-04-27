@@ -1,8 +1,10 @@
-import yfinance as yf
 import time
-import pytz
-import holidays
 from datetime import datetime, time as dt_time
+
+import holidays
+import pytz
+import yfinance as yf
+
 
 class MarketTrendManager:
     def __init__(self, index_ticker="SPY", refresh_interval=600):
@@ -59,8 +61,6 @@ class MarketTrendManager:
             return "SPY"
 
 
-
-
 def guess_market_session():
     ny_time_zone = pytz.timezone('America/New_York')
     now = datetime.now(ny_time_zone)
@@ -89,6 +89,7 @@ def guess_market_session():
             market_status = "애프터장"
 
     return market_status
+
 
 def adjust_momentum_based_on_market(macd_signal, ma_signal, bb_signal, rsi_signal):
     momentum_score = 0
@@ -130,4 +131,3 @@ def adjust_momentum_based_on_market(macd_signal, ma_signal, bb_signal, rsi_signa
         final_momentum = "HOLD"
 
     return final_momentum
-

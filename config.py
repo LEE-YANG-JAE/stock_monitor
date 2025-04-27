@@ -5,30 +5,58 @@ CONFIG_FILE = 'config.json'
 
 # 기본 설정 값
 default_config = {
-  "view_mode": "short",      # 기본값: short (단기)
-  "current_period": "14d",   # 단기 데이터 기본 설정
-  "current_interval": "1m",  # 1분 간격 기본 설정
-  "current_rsi": 14,       # 단기 RSI 기간 설정
-  "current_macd": [12, 26, 9],   # 단기 MACD 설정
-  "current_bollinger": 14, # 단기 Bollinger Bands 설정
+    "view_mode": "short",  # 기본값: short (단기)
+    "current_period": "14d",  # 단기 데이터 기본 설정
+    "current_interval": "1m",  # 1분 간격 기본 설정
+    "current_rsi": 14,  # 단기 RSI 기간 설정
+    "current_macd": [12, 26, 9],  # 단기 MACD 설정
+    "current_bollinger": 14,  # 단기 Bollinger Bands 설정
+    "settings": {
+        "short": {
+            "period": "14d",  # 단기 데이터 기본 설정
+            "rsi": 14,  # 단기 RSI 기간 설정
+            "macd": [12, 26, 9],  # 단기 MACD 설정
+            "bollinger": 14,  # 단기 Bollinger Bands 설정
+        },
+        "long": {
+            "period": "6mo",  # 장기 데이터 기본 설정
+            "rsi": 30,  # 단기 RSI 기간 설정
+            "macd": [12, 30, 9],  # 단기 MACD 설정
+            "bollinger": 30,  # 단기 Bollinger Bands 설정
+        }
+    },
 }
+
+
+def merge_config(user_config, default_config):
+    """user_config에 기본값에서 빠진 항목이 있으면 채워 넣는다."""
+    for key, default_value in default_config.items():
+        if key not in user_config:
+            user_config[key] = default_value
+        elif isinstance(default_value, dict):
+            # 재귀적으로 딕셔너리 내부도 비교
+            if not isinstance(user_config[key], dict):
+                user_config[key] = default_value
+            else:
+                merge_config(user_config[key], default_value)
+    return user_config
 
 
 # config.json 파일에서 설정 읽기
 def load_config():
-    # config.json 파일이 없으면 기본 설정을 만들어서 저장
     if not os.path.exists(CONFIG_FILE):
         print(f"{CONFIG_FILE} 파일이 없습니다. 기본 설정을 생성합니다.")
-        save_config(default_config)  # 기본 설정을 저장
-        return default_config  # 기본 설정 반환
+        save_config(default_config)
+        return default_config
 
     try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:  # UTF-8로 열기
-            config = json.load(f)
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            user_config = json.load(f)
+            # 누락된 항목 채우기
+            merged_config = merge_config(user_config, default_config)
+            return merged_config
     except (FileNotFoundError, json.JSONDecodeError):
-        # 파일이 없거나 잘못된 형식일 경우 기본 값으로 설정
-        config = default_config
-    return config
+        return default_config
 
 
 # config.json 파일에 설정 저장

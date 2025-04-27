@@ -1,42 +1,57 @@
-import tkinter as tk
-from datetime import datetime
-from tkinter import simpledialog, messagebox, ttk
-import threading
-import time
 import json
 import os
+import re
+import threading
+import time
+import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from tkinter import simpledialog, messagebox, ttk
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pytz
 import yfinance as yf
-
-from market_trend_manager import MarketTrendManager, guess_market_session
-from stock_score import fetch_stock_data, calculate_rsi, calculate_moving_average, is_market_open
-import re
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import matplotlib.pyplot as plt
+
 import config
+from market_trend_manager import guess_market_session
+from stock_score import fetch_stock_data, is_market_open
 
 # 다중 종목 감시용 GUI
 watchlist = []
 SAVE_FILE = "watchlist.json"
+
+
+# 설정 다시 불러오기 버튼 추가 함수
+def add_reload_button(parent_frame):
+    top_bar_frame = tk.Frame(parent_frame)
+    top_bar_frame.pack(fill=tk.X, pady=5, padx=10)
+    reload_btn = tk.Button(top_bar_frame, text="↻ 설정 다시 불러오기", command=reload_config, font=("Arial", 10))
+    reload_btn.pack(side=tk.RIGHT, padx=10, anchor="ne")
+
+
+def reload_config():
+    config.config = config.load_config()
+    refresh_table()
+    messagebox.showinfo("설정 불러오기", "설정이 다시 불러와졌습니다.")
+
 
 def on_radio_select():
     selected_value = radio_var.get()
 
     # 선택된 값에 맞는 데이터 요청 방식 변경
     if selected_value == "short":
-        config.config["current_period"] = "14d"  # 단기 데이터
-        config.config["current_interval"] = "1m"  # 1분 간격
-        config.config["current_rsi"] = 14  # 단기 RSI 기간 설정
-        config.config["current_macd"] = [12, 26, 9]  # 단기 MACD 설정
-        config.config["current_bollinger"] = 7  # 단기 Bollinger Bands 설정
+        config.config["current_period"] = config.config["settings"]["short"]["period"]
+        config.config["current_rsi"] = config.config["settings"]["short"]["rsi"]
+        config.config["current_macd"] = config.config["settings"]["short"]["macd"]
+        config.config["current_bollinger"] = config.config["settings"]["short"]["bollinger"]
         print("단기 데이터가 선택되었습니다.")
     elif selected_value == "long":
-        config.config["current_period"] = "6mo"  # 장기 데이터
-        config.config["current_interval"] = "1d"  # 1일 간격
-        config.config["current_rsi"] = 30  # 장기 RSI 기간 설정
-        config.config["current_macd"] = [12, 30, 9]  # 장기 MACD 설정
-        config.config["current_bollinger"] = 30  # 장기 Bollinger Bands 설정
+        config.config["current_period"] = config.config["settings"]["long"]["period"]
+        config.config["current_rsi"] = config.config["settings"]["long"]["rsi"]
+        config.config["current_macd"] = config.config["settings"]["long"]["macd"]
+        config.config["current_bollinger"] = config.config["settings"]["long"]["bollinger"]
         print("장기 데이터가 선택되었습니다.")
 
     # 설정을 저장
@@ -124,25 +139,28 @@ def load_watchlist():
 def refresh_table_once():
     try:
         results = []
-        for ticker in watchlist:
+        def fetch_and_collect(ticker):
             result = fetch_stock_data(ticker)
-            if result:  # None이 아닌 데이터만 추가
+            if result:
                 results.append(result)
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            executor.map(fetch_and_collect, watchlist)
+
+        # 수익률(rate) 기준으로 정렬
+        results.sort(key=lambda x: float(x[5].replace('%', '')), reverse=True)  # 5번 인덱스가 rate
+
         update_table(results)  # 테이블을 갱신
     except Exception as e:
         print(f"refresh_table_once error: {e}")
 
 
 # 주식 데이터 주기적으로 갱신
-def monitor_stocks(update_table_func):
+def monitor_stocks():
+    time.sleep(60)
     while True:
         try:
-            results = []
-            for ticker in watchlist:
-                result = fetch_stock_data(ticker)
-                if result:  # None이 아닌 데이터만 추가
-                    results.append(result)
-            update_table_func(results)
+            refresh_table_once()
         except Exception as e:
             print(f"monitor_stocks error: {e}")
 
@@ -153,6 +171,7 @@ def monitor_stocks(update_table_func):
         else:
             print("시장 종료 - 데이터 갱신 중단...")
             break
+
 
 # 주식 시장 상태를 표시할 라벨 추가
 def update_market_status():
@@ -302,6 +321,7 @@ def main():
     root = tk.Tk()
     root.title("미국 주식 실시간 모니터링(매 1분)")
 
+    add_reload_button(root)
     market_status_label = tk.Label(root, text="주식장 종료\n한국 시간:\n미국 시간:",
                                    font=("Arial", 14))
     market_status_label.pack(pady=10)
@@ -365,10 +385,10 @@ def main():
 
     # 데이터 로드 및 테이블 갱신
     load_watchlist()  # watchlist 로드
-    refresh_table_once()  # 테이블 한 번 갱신
+    refresh_table_once()
 
     # 주식 감시 목록을 계속 모니터링
-    threading.Thread(target=monitor_stocks, args=(update_table,), daemon=True).start()
+    threading.Thread(target=monitor_stocks, daemon=True).start()
 
     # 장 상태 갱신 시작
     update_market_status()

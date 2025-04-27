@@ -1,9 +1,10 @@
-import yfinance as yf
-import pytz
-from datetime import datetime
-import config  # config 모듈 임포트
 import random
+from datetime import datetime
 
+import pytz
+import yfinance as yf
+
+import config  # config 모듈 임포트
 from market_trend_manager import guess_market_session, adjust_momentum_based_on_market
 
 # 각 지표의 신뢰도 점수 (예시)
@@ -12,11 +13,13 @@ MACD_confidence = 0.8  # 80% 확률로 유효한 매도 신호
 MA_confidence = 0.6  # 60% 확률로 유효한 매도 신호
 BB_confidence = 0.75  # 75% 확률로 유효한 매수 신호
 
+
 def update_period_interval(period, interval):
     config.config["current_period"] = period
     config.config["current_interval"] = interval
     print(f"현재 설정: period={config.config['current_period']}, interval={config.config['current_interval']}")
     config.save_config(config.config)
+
 
 # 서머타임 적용 여부 판단 (미국 뉴욕 기준)
 def is_market_open():
@@ -37,11 +40,13 @@ def is_market_open():
     else:
         return False
 
+
 # 이동평균 계산 함수
 def calculate_moving_average(historical_data, days=5):
     close_prices = historical_data['Close']
     moving_average = close_prices.iloc[-days:].mean()
     return moving_average
+
 
 # RSI 계산 함수 (14일 기준)
 def calculate_rsi(historical_data, period=14):
@@ -68,6 +73,7 @@ def calculate_rsi(historical_data, period=14):
     # 최근 값 반환
     return rsi.iloc[-1]  # 마지막 값만 반환
 
+
 # MACD 계산 함수
 def calculate_macd(historical_data, period=(12, 26, 9)):
     # 12일, 26일 EMA를 사용하여 MACD 계산
@@ -80,6 +86,7 @@ def calculate_macd(historical_data, period=(12, 26, 9)):
 
     return macd, signal_line, macd_histogram
 
+
 # Bollinger Bands 계산 함수
 def calculate_bollinger_bands(historical_data, window=20):
     # 20일 이동평균 및 표준편차
@@ -90,6 +97,7 @@ def calculate_bollinger_bands(historical_data, window=20):
     lower_band = rolling_mean - (rolling_std * 2)  # Lower Band
 
     return upper_band, lower_band, rolling_mean
+
 
 # 각 지표가 주는 신뢰도를 기반으로 확률적으로 결정
 def generate_momentum_signal(rsi_signal, macd_signal, ma_signal, bb_signal):
@@ -124,13 +132,15 @@ def generate_momentum_signal(rsi_signal, macd_signal, ma_signal, bb_signal):
     else:
         return "HOLD"
 
+
 # 종목 데이터 가져오기
 def fetch_stock_data(ticker):
     try:
         ticker_data = yf.Ticker(ticker)
         # 장중일 때와 비장중일 때 데이터 요청 방식 처리
         if is_market_open():
-            historical_data = ticker_data.history(period=config.config["current_period"], interval=config.config["current_interval"])
+            historical_data = ticker_data.history(period=config.config["current_period"],
+                                                  interval=config.config["current_interval"])
         else:
             historical_data = ticker_data.history(period=config.config["current_period"])
 
@@ -157,7 +167,8 @@ def fetch_stock_data(ticker):
 
         # Calculate MACD and Bollinger Bands
         macd, signal_line, macd_histogram = calculate_macd(historical_data, config.config["current_macd"])
-        upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data, config.config["current_bollinger"])
+        upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data,
+                                                                        config.config["current_bollinger"])
 
         # Calculate MACD Signal: BUY, SELL, or HOLD based on MACD crossover
         macd_simple_signal = 'HOLD'
@@ -203,7 +214,8 @@ def fetch_stock_data(ticker):
         elif rsi < 30:
             rsi_signal = "BUY"
 
-        momentum_signal = adjust_momentum_based_on_market(macd_simple_signal, trend_simple_signal, bb_signal, rsi_signal)
+        momentum_signal = adjust_momentum_based_on_market(macd_simple_signal, trend_simple_signal, bb_signal,
+                                                          rsi_signal)
 
         # Return all data in a tuple (or dictionary if preferred)
         return (
@@ -222,4 +234,3 @@ def fetch_stock_data(ticker):
     except Exception as e:
         print(f"Error fetching data for {ticker}: {e}")
         return None
-
