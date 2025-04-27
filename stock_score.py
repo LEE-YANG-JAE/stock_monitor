@@ -79,43 +79,47 @@ def calculate_bollinger_bands(historical_data, window=20):
 # 종목 데이터 가져오기
 def fetch_stock_data(ticker):
     try:
+        # Determine if the market is open
         if is_market_open():
             ticker_data = yf.Ticker(ticker)
-            historical_data = ticker_data.history(period="1d", interval="1m")  # 장중 1분 간격 데이터
+            historical_data = ticker_data.history(period="1d", interval="1m")  # Intraday data (1-minute interval)
         else:
             ticker_data = yf.Ticker(ticker)
-            historical_data = ticker_data.history(period="3y")  # 장 종료 후에는 3년치
+            historical_data = ticker_data.history(period="3y")  # Historical data for market close
 
-        company_name = ticker_data.info.get('shortName')
+        # Fetch company name and current price
+        company_name = ticker_data.info.get('shortName', 'Unknown Company')
         current_price = ticker_data.info.get('regularMarketPrice', None)
 
         if current_price is None or isinstance(current_price, str):
-            current_price = 0  # 기본 값 설정
+            current_price = 0  # Default value if current price is unavailable
 
-        # RSI 및 이동 평균 계산
-        rsi = calculate_rsi(historical_data)  # RSI 계산 함수 호출
+        # Calculate RSI and moving averages (MA5, MA20)
+        rsi = calculate_rsi(historical_data)  # Assuming you have this function defined
         ma5 = calculate_moving_average(historical_data, days=5)
         ma20 = calculate_moving_average(historical_data, days=20)
 
-        # MACD 및 Bollinger Bands 계산
+        # Calculate MACD and Bollinger Bands
         macd, signal_line, macd_histogram = calculate_macd(historical_data)
         upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data)
 
-        # MACD Signal (매수, 보류, 매도) 계산
-        if macd.iloc[-1] > signal_line.iloc[-1]:  # Use .iloc for position-based access
-            macd_signal = f"BUY ({macd.iloc[-1]:.2f})"  # MACD가 Signal Line 위로 교차 시 매수 신호
-        elif macd.iloc[-1] < signal_line.iloc[-1]:
-            macd_signal = f"SELL ({macd.iloc[-1]:.2f})"  # MACD가 Signal Line 아래로 교차 시 매도 신호
-        else:
-            macd_signal = f"HOLD ({macd.iloc[-1]:.2f})"  # MACD와 Signal Line이 교차하지 않으면 보류
+        # Calculate MACD Signal: BUY, SELL, or HOLD based on MACD crossover
+        if macd.iloc[-1] > signal_line.iloc[-1]:  # MACD crosses above Signal Line (BUY)
+            macd_signal = f"BUY ({macd.iloc[-1]:.2f})"
+        elif macd.iloc[-1] < signal_line.iloc[-1]:  # MACD crosses below Signal Line (SELL)
+            macd_signal = f"SELL ({macd.iloc[-1]:.2f})"
+        else:  # MACD and Signal Line are flat (HOLD)
+            macd_signal = f"HOLD ({macd.iloc[-1]:.2f})"
 
+        # Rate calculation (percentage change) and color code for the rate
         rate = ticker_data.info.get('regularMarketChangePercent', 0)
         rate_color = "black"
         if rate > 0:
-            rate_color = "green"
+            rate_color = "green"  # Green if price is increasing
         elif rate < 0:
-            rate_color = "red"
+            rate_color = "red"  # Red if price is decreasing
 
+        # Trend Signal based on the comparison of moving averages (MA5 vs MA20)
         if ma5 > ma20:
             trend_signal = f"BUY (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
         elif ma5 < ma20:
@@ -123,23 +127,28 @@ def fetch_stock_data(ticker):
         else:
             trend_signal = f"HOLD (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
 
-        # Return the data with updated MACD signal
+        # Bollinger Bands Signal: BUY, SELL, or HOLD based on the price position relative to the bands
+        if current_price > upper_band.iloc[-1]:
+            bb_signal = "SELL"
+        elif current_price < lower_band.iloc[-1]:
+            bb_signal = "BUY"
+        else:
+            bb_signal = "HOLD"
+
+        # Return all data in a tuple (or dictionary if preferred)
         return (
-            company_name,
-            ticker,
-            f"${current_price:.2f}",
-            trend_signal,
-            f"{rsi:.2f}%",
-            f"{round(rate, 2):.2f}%",
-            rate_color,
-            macd_signal,
-            signal_line.iloc[-1],
-            macd_histogram.iloc[-1],
-            upper_band.iloc[-1],
-            lower_band.iloc[-1],
-            middle_band.iloc[-1]
+            company_name,  # Company Name
+            ticker,  # Ticker Symbol
+            f"${current_price:.2f}",  # Current Price
+            trend_signal,  # Trend Signal (BUY/SELL/HOLD)
+            f"{rsi:.2f}%",  # RSI Signal
+            f"{round(rate, 2):.2f}%",  # Rate of Change
+            rate_color,  # Rate color (green, red, black)
+            macd_signal,  # MACD Signal (BUY/SELL/HOLD)
+            bb_signal  # Bollinger Bands Signal (BUY/SELL/HOLD)
         )
 
     except Exception as e:
-        print(f"Error fetching {ticker}: {e}")
+        print(f"Error fetching data for {ticker}: {e}")
         return None
+

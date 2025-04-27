@@ -205,7 +205,7 @@ def update_table(data):
             table.delete(row)
 
         for record in data:
-            if record and len(record) == 13:  # Ensure we have 13 values in the record
+            if record:  # Ensure we have 13 values in the record
                 # Unpack the data record
                 (
                     name,
@@ -216,11 +216,7 @@ def update_table(data):
                     rate,
                     rate_color,
                     macd_signal,
-                    signal_line,
-                    macd_histogram,
-                    upper_band,
-                    lower_band,
-                    middle_band
+                    bb_signal
                 ) = record
 
                 # Prepare the data for display
@@ -241,11 +237,7 @@ def update_table(data):
                     rsi_display,  # RSI signal
                     rate,  # Rate of change
                     macd_signal,  # MACD signal
-                    signal_line,  # Signal line value
-                    macd_histogram,  # MACD Histogram value
-                    upper_band,  # Upper Bollinger Band
-                    lower_band,  # Lower Bollinger Band
-                    middle_band  # Middle Bollinger Band
+                    bb_signal  # Signal line value
                 ))
 
                 # Set color for the rate
@@ -260,11 +252,7 @@ def update_table(data):
             "RSI 신호": 150,
             "수익률": 100,
             "MACD 신호": 150,
-            "Signal Line": 100,
-            "MACD Histogram": 100,
-            "Upper Band": 100,
-            "Lower Band": 100,
-            "Middle Band": 100
+            "BB 신호": 150
         }
 
         for col, width in min_widths.items():
@@ -281,7 +269,7 @@ def main():
     global root, table, market_status_label, time_label
 
     root = tk.Tk()
-    root.title("미국 주식 실시간 모니터링(매시간 1분)")
+    root.title("미국 주식 실시간 모니터링(매 1분)")
 
     market_status_label = tk.Label(root, text="주식장 종료\n한국 시간: 2025-04-27 11:54:29\n미국 시간: 2025-04-26 22:54:29",
                                    font=("Arial", 14))
@@ -300,7 +288,7 @@ def main():
     # UI 초기화
     table_frame = tk.Frame(root)
     table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "Signal Line", "MACD Histogram", "Upper Band", "Lower Band", "Middle Band")
+    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "BB 신호")
     table = ttk.Treeview(table_frame, columns=columns, show="headings")
     vsb = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
     hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=table.xview)
@@ -317,11 +305,7 @@ def main():
         "RSI 신호": 150,
         "수익률": 100,
         "MACD 신호": 150,
-        "Signal Line": 100,
-        "MACD Histogram": 100,
-        "Upper Band": 100,
-        "Lower Band": 100,
-        "Middle Band": 100
+        "BB 신호": 150
     }
 
     for col in columns:
