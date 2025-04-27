@@ -12,10 +12,39 @@ from stock_score import fetch_stock_data, calculate_rsi, calculate_moving_averag
 import re
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
+import config
 
 # 다중 종목 감시용 GUI
 watchlist = []
 SAVE_FILE = "watchlist.json"
+
+def on_radio_select():
+    selected_value = radio_var.get()
+
+    # 선택된 값에 맞는 데이터 요청 방식 변경
+    if selected_value == "short":
+        config.config["current_period"] = "14d"  # 단기 데이터
+        config.config["current_interval"] = "1m"  # 1분 간격
+        print("단기 데이터가 선택되었습니다.")
+    elif selected_value == "long":
+        config.config["current_period"] = "6mo"  # 장기 데이터
+        config.config["current_interval"] = "1m"  # 1분 간격
+        print("장기 데이터가 선택되었습니다.")
+
+    # 설정을 저장
+    config.config["view_mode"] = selected_value  # 선택된 데이터 유형을 저장
+    config.save_config(config.config)
+
+    # 주식 데이터를 다시 불러오고 테이블 갱신
+    refresh_table()
+
+
+def refresh_table():
+    # 테이블의 내용을 지우고 새로 데이터를 갱신합니다.
+    for row in table.get_children():
+        table.delete(row)
+
+    refresh_table_once()
 
 
 # 종목 추가 함수 (티커 입력 기반, yfinance 검색)
@@ -102,13 +131,9 @@ def monitor_stocks(update_table_func):
         if is_market_open():
             # 장중일 경우 1분 간격으로 데이터 갱신
             print("시장 열림 - 데이터 갱신 중...")
-            # 데이터 갱신 코드 삽입 (예: `fetch_stock_data` 호출)
-        else:
-            # 장 종료 후에는 데이터 갱신을 하지 않음
-            print("시장 종료 - 데이터 갱신 중지")
-            break  # 장 종료 후에는 데이터 갱신을 멈추도록 종료
 
         time.sleep(60)  # 1분 간격으로 실행
+
 
 # 주식 시장 상태를 표시할 라벨 추가
 def update_market_status():
@@ -147,14 +172,6 @@ def on_item_double_click(event):
 
     # Unpack the data
     _, _, _, _, _, _, _, macd_signal, signal_line, macd_histogram, upper_band, lower_band, middle_band = data
-
-    # Debugging output
-    print(f"MACD Signal: {macd_signal}")
-    print(f"Signal Line: {signal_line}")
-    print(f"MACD Histogram: {macd_histogram}")
-    print(f"Upper Band: {upper_band}")
-    print(f"Lower Band: {lower_band}")
-    print(f"Middle Band: {middle_band}")
 
     # Check if upper_band and lower_band are scalar values (numpy.float64)
     if isinstance(upper_band, (float, int, np.float64)):
@@ -261,11 +278,9 @@ def update_table(data):
         print(f"update_table error: {e}")
 
 
-
-# 테이블 및 기타 UI 요소
 # 테이블 및 기타 UI 요소
 def main():
-    global root, table, market_status_label, time_label
+    global root, table, market_status_label, time_label, radio_var  # 전역 변수로 radio_var 사용
 
     root = tk.Tk()
     root.title("미국 주식 실시간 모니터링(매 1분)")
@@ -283,6 +298,21 @@ def main():
 
     remove_button = tk.Button(button_frame, text="종목 삭제", command=remove_ticker)
     remove_button.pack(side=tk.LEFT, padx=10)
+
+    # radio_var를 GUI에서 사용하기 위한 변수로 설정 (루트 윈도우가 생성된 후에 선언)
+    radio_var = tk.StringVar(value=config.config["view_mode"])  # config에서 불러온 값을 기반으로 기본값 설정
+
+    # 라디오 버튼
+    radio_frame = tk.Frame(root)
+    radio_frame.pack(pady=10)
+
+    short_term_radio = tk.Radiobutton(radio_frame, text="단기 데이터", variable=radio_var, value="short",
+                                      command=on_radio_select)
+    long_term_radio = tk.Radiobutton(radio_frame, text="장기 데이터", variable=radio_var, value="long",
+                                     command=on_radio_select)
+
+    short_term_radio.pack(side=tk.LEFT, padx=10)
+    long_term_radio.pack(side=tk.LEFT, padx=10)
 
     # UI 초기화
     table_frame = tk.Frame(root)

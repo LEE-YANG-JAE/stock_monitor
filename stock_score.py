@@ -1,7 +1,13 @@
 import yfinance as yf
 import pytz
 from datetime import datetime
-import pandas as pd
+import config  # config 모듈 임포트
+
+def update_period_interval(period, interval):
+    config.config["current_period"] = period
+    config.config["current_interval"] = interval
+    print(f"현재 설정: period={config.config['current_period']}, interval={config.config['current_interval']}")
+    config.save_config(config.config)
 
 # 서머타임 적용 여부 판단 (미국 뉴욕 기준)
 def is_market_open():
@@ -56,8 +62,8 @@ def calculate_rsi(historical_data, period=14):
 # MACD 계산 함수
 def calculate_macd(historical_data):
     # 12일, 26일 EMA를 사용하여 MACD 계산
-    short_ema = historical_data['Close'].ewm(span=12, adjust=False).mean()
-    long_ema = historical_data['Close'].ewm(span=26, adjust=False).mean()
+    short_ema = historical_data['Close'].ewm(span=9, adjust=False).mean()
+    long_ema = historical_data['Close'].ewm(span=21, adjust=False).mean()
 
     macd = short_ema - long_ema  # MACD Line
     signal_line = macd.ewm(span=9, adjust=False).mean()  # Signal Line
@@ -79,15 +85,22 @@ def calculate_bollinger_bands(historical_data, window=20):
 # 종목 데이터 가져오기
 def fetch_stock_data(ticker):
     try:
-        # Determine if the market is open
+        ticker_data = yf.Ticker(ticker)
+        # 장중일 때와 비장중일 때 데이터 요청 방식 처리
         if is_market_open():
-            ticker_data = yf.Ticker(ticker)
-            # 실시간 데이터(1분 간격)
-            historical_data = ticker_data.history(period="1d", interval="1m")  # 1분 단위
+            historical_data = ticker_data.history(period=config.config["current_period"], interval=config.config["current_interval"])
         else:
-            ticker_data = yf.Ticker(ticker)
-            # 비개장 시간에는 1일 단위 데이터
-            historical_data = ticker_data.history(period="3y", interval="1d")  # 1일 단위
+            historical_data = ticker_data.history(period=config.config["current_period"])  # 비장중에는 1일 단위 또는 3개월 데이터 요청
+
+        # 단기 데이터 요청 시, 주말 데이터가 없으면 가장 최근 데이터로 대체
+        if historical_data.index[-1].weekday() == 6:  # 일요일일 경우
+            # NaN 값이 있으면 최근 데이터를 사용해 NaN 값을 채우기
+            historical_data = historical_data.ffill()  # NaN 값을 최근 값으로 채움
+
+        # 데이터를 계산할 때 NaN 값이 있다면, 데이터에서 NaN을 제거하거나 가장 최근 값을 사용
+        if historical_data.isna().sum().sum() > 0:
+            print(f"NaN 값이 존재하는 데이터를 제거합니다: {ticker}")
+            historical_data = historical_data.dropna()  # NaN 값을 제거
 
         # Fetch company name and current price
         company_name = ticker_data.info.get('shortName', 'Unknown Company')
