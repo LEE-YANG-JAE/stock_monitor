@@ -9,7 +9,7 @@ import numpy as np
 import pytz
 import yfinance as yf
 
-from market_trend_manager import MarketTrendManager
+from market_trend_manager import MarketTrendManager, guess_market_session
 from stock_score import fetch_stock_data, calculate_rsi, calculate_moving_average, is_market_open
 import re
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -19,8 +19,6 @@ import config
 # 다중 종목 감시용 GUI
 watchlist = []
 SAVE_FILE = "watchlist.json"
-
-mtm = MarketTrendManager()
 
 def on_radio_select():
     selected_value = radio_var.get()
@@ -165,7 +163,7 @@ def update_market_status():
     korea_time = datetime.now(korea_timezone).strftime("%Y-%m-%d %H:%M:%S")
     new_york_time = datetime.now(new_york_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
-    status = mtm.guess_market_session()
+    status = guess_market_session()
     # Construct the full text
     full_text = f"{status}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
 

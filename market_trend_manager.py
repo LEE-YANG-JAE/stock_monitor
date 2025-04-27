@@ -58,54 +58,76 @@ class MarketTrendManager:
             self.market_source = "SPY"
             return "SPY"
 
-    def guess_market_session(self):
-        ny_time_zone = pytz.timezone('America/New_York')
-        now = datetime.now(ny_time_zone)
-        ny_time = now.time()
 
-        us_holidays = holidays.country_holidays('US')
-        market_status = "주식장 종료"
 
-        if now.date() in us_holidays or now.weekday() >= 5:  # 토요일(5), 일요일(6):
-            self.market_session = market_status
-            return market_status
 
-        is_dst = bool(now.dst())  # 서머타임 적용 여부
-        if is_dst:
-            if dt_time(9, 30) <= ny_time <= dt_time(16, 0):
-                market_status = "정규장"
-            elif dt_time(4, 0) <= ny_time < dt_time(9, 30):
-                market_status = "프리장"
-            elif dt_time(16, 0) < ny_time <= dt_time(20, 0):
-                market_status = "애프터장"
-        else:
-            if dt_time(10, 30) <= ny_time <= dt_time(17, 0):
-                market_status = "정규장"
-            elif dt_time(5, 0) <= ny_time < dt_time(10, 30):
-                market_status = "프리장"
-            elif dt_time(17, 0) < ny_time <= dt_time(21, 0):
-                market_status = "애프터장"
+def guess_market_session():
+    ny_time_zone = pytz.timezone('America/New_York')
+    now = datetime.now(ny_time_zone)
+    ny_time = now.time()
 
-        self.market_session = market_status
+    us_holidays = holidays.country_holidays('US')
+    market_status = "주식장 종료"
+
+    if now.date() in us_holidays or now.weekday() >= 5:  # 토요일(5), 일요일(6):
         return market_status
 
-    def adjust_momentum_based_on_market(self, momentum_signal, market_trend):
-        momentum = "HOLD"
-        if market_trend == "Uptrend":
-            if momentum_signal == "BUY":
-                momentum = "STRONG BUY"
-            elif momentum_signal == "SELL":
-                momentum = "CAUTION"
-            else:
-                return "HOLD"
-        elif market_trend == "Downtrend":
-            if momentum_signal == "SELL":
-                momentum = "STRONG SELL"
-            elif momentum_signal == "BUY":
-                momentum = "CAUTION"
-            else:
-                momentum = "HOLD"
+    is_dst = bool(now.dst())  # 서머타임 적용 여부
+    if is_dst:
+        if dt_time(9, 30) <= ny_time <= dt_time(16, 0):
+            market_status = "정규장"
+        elif dt_time(4, 0) <= ny_time < dt_time(9, 30):
+            market_status = "프리장"
+        elif dt_time(16, 0) < ny_time <= dt_time(20, 0):
+            market_status = "애프터장"
+    else:
+        if dt_time(10, 30) <= ny_time <= dt_time(17, 0):
+            market_status = "정규장"
+        elif dt_time(5, 0) <= ny_time < dt_time(10, 30):
+            market_status = "프리장"
+        elif dt_time(17, 0) < ny_time <= dt_time(21, 0):
+            market_status = "애프터장"
 
-        self.momentum = momentum
-        return momentum
+    return market_status
+
+def adjust_momentum_based_on_market(macd_signal, ma_signal, bb_signal, rsi_signal):
+    momentum_score = 0
+
+    # MACD
+    if macd_signal == "BUY":
+        momentum_score += 2
+    elif macd_signal == "SELL":
+        momentum_score -= 2
+
+    # MA
+    if ma_signal == "BUY":
+        momentum_score += 1
+    elif ma_signal == "SELL":
+        momentum_score -= 1
+
+    # BB
+    if bb_signal == "BUY":
+        momentum_score += 1
+    elif bb_signal == "SELL":
+        momentum_score -= 1
+
+    # RSI
+    if rsi_signal == "BUY":
+        momentum_score += 1
+    elif rsi_signal == "SELL":
+        momentum_score -= 1
+
+    # 최종 결정
+    if momentum_score >= 4:
+        final_momentum = "STRONG BUY"
+    elif momentum_score >= 2:
+        final_momentum = "BUY"
+    elif momentum_score <= -4:
+        final_momentum = "STRONG SELL"
+    elif momentum_score <= -2:
+        final_momentum = "SELL"
+    else:
+        final_momentum = "HOLD"
+
+    return final_momentum
 
