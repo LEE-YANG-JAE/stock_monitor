@@ -313,12 +313,25 @@ def update_table(data):
     except Exception as e:
         print(f"update_table error: {e}")
 
+def show_splash(root):
+    splash = tk.Toplevel(root)
+    splash.overrideredirect(True)  # ✨ 타이틀바 제거 (순수한 창)
+    width, height = 300, 150
+    x = (root.winfo_screenwidth() - width) // 2
+    y = (root.winfo_screenheight() - height) // 2
+    splash.geometry(f"{width}x{height}+{x}+{y}")
+    splash_label = tk.Label(splash, text="프로그램 로딩 중...", font=("Arial", 14))
+    splash_label.pack(expand=True)
+    splash.update()
+    return splash
 
 # 테이블 및 기타 UI 요소
 def main():
     global root, table, market_status_label, time_label, radio_var  # 전역 변수로 radio_var 사용
 
     root = tk.Tk()
+    root.withdraw()  # ✅ 먼저 숨긴다 (root 안보이게)
+    splash = show_splash(root)  # 1. 로딩 화면 먼저 띄움
     root.title("미국 주식 실시간 모니터링(매 1분)")
 
     add_reload_button(root)
@@ -395,9 +408,9 @@ def main():
 
     # Bind double-click event to table for opening graph
     table.bind("<Double-1>", on_item_double_click)
-
+    splash.destroy()  # 2. 초기화 끝나면 로딩창 닫기
+    root.deiconify()  # ✅ root 메인 윈도우 보여줌
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()
