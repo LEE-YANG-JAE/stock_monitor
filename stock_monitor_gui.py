@@ -1,14 +1,17 @@
 import tkinter as tk
+from datetime import datetime
 from tkinter import simpledialog, messagebox, ttk
 import threading
 import time
 import json
 import os
-from datetime import datetime
+import numpy as np
 import pytz
 import yfinance as yf
 from stock_score import fetch_stock_data, calculate_rsi, calculate_moving_average, is_market_open
 import re
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
 
 # 다중 종목 감시용 GUI
 watchlist = []
@@ -110,29 +113,118 @@ def monitor_stocks(update_table_func):
 
 # 주식 시장 상태를 표시할 라벨 추가
 def update_market_status():
-    status = "장 중" if is_market_open() else "장 종료"
-    market_status_label.config(text=f"현재 시장 상태: {status}")
+    # Get current times
+    korea_timezone = pytz.timezone('Asia/Seoul')
+    new_york_timezone = pytz.timezone('America/New_York')
 
-    # 30초마다 상태 갱신
-    root.after(30000, update_market_status)  # 30초마다 갱신
+    korea_time = datetime.now(korea_timezone).strftime("%Y-%m-%d %H:%M:%S")
+    new_york_time = datetime.now(new_york_timezone).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Get market status
+    if is_market_open():
+        status = "주식장 중"
+    else:
+        status = "주식장 종료"
+
+    # Construct the full text
+    full_text = f"{status}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
+
+    # Update the market status label with color (only change market status color)
+    market_status_label.config(
+        text=full_text,
+    )
+    # Update every 1000 milliseconds (1 second)
+    root.after(1000, update_market_status)  # Update every 1 second
 
 
-# GUI 업데이트 함수
+def on_item_double_click(event):
+    selected_item = table.selection()[0]
+    ticker = table.item(selected_item)['values'][0].split('(')[-1].split(')')[0]  # Extract ticker
+
+    # Fetch stock data for the selected ticker with a longer period
+    data = fetch_stock_data(ticker)  # Fetch data for 1 year to ensure sufficient historical data
+    if data is None:
+        return
+
+    # Unpack the data
+    _, _, _, _, _, _, _, macd_signal, signal_line, macd_histogram, upper_band, lower_band, middle_band = data
+
+    # Debugging output
+    print(f"MACD Signal: {macd_signal}")
+    print(f"Signal Line: {signal_line}")
+    print(f"MACD Histogram: {macd_histogram}")
+    print(f"Upper Band: {upper_band}")
+    print(f"Lower Band: {lower_band}")
+    print(f"Middle Band: {middle_band}")
+
+    # Check if upper_band and lower_band are scalar values (numpy.float64)
+    if isinstance(upper_band, (float, int, np.float64)):
+        upper_band = [upper_band]  # Wrap in a list if it's a scalar value
+
+    if isinstance(lower_band, (float, int, np.float64)):
+        lower_band = [lower_band]  # Wrap in a list if it's a scalar value
+
+    # MACD Histogram should be an array of values, not a single float
+    if isinstance(macd_histogram, float):
+        macd_histogram = [macd_histogram]  # Convert to list if it's a single float
+
+    # Create a new window to show the graphs
+    graph_window = tk.Toplevel()
+    graph_window.title(f"{ticker} MACD and Bollinger Bands")
+
+    # Create the figure and axes
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    # MACD plot
+    ax1.plot(macd_signal, label='MACD Line', color='blue')
+    ax1.plot(signal_line, label='Signal Line', color='orange')
+    ax1.bar(range(len(macd_histogram)), macd_histogram, label='MACD Histogram', color='gray', alpha=0.5)
+    ax1.set_title(f"{ticker} - MACD")
+    ax1.legend()
+
+    # Bollinger Bands plot
+    ax2.plot(upper_band, label='Upper Band', color='red', linestyle='--')
+    ax2.plot(lower_band, label='Lower Band', color='green', linestyle='--')
+    ax2.plot(middle_band, label='Middle Band (Moving Average)', color='blue')
+    ax2.fill_between(range(len(upper_band)), upper_band, lower_band, color='yellow', alpha=0.2)
+    ax2.set_title(f"{ticker} - Bollinger Bands")
+    ax2.legend()
+
+    # Convert Matplotlib figure to Tkinter canvas
+    canvas = FigureCanvasTkAgg(fig, master=graph_window)
+    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)  # Ensure it's packed to fill the window
+
+    # Display the graphs
+    canvas.draw()
+
+
+# 테이블에서 매수/매도/보류 신호 표시 및 그래프 표시 추가
 def update_table(data):
     try:
         for row in table.get_children():
             table.delete(row)
 
         for record in data:
-            if record:  # None 데이터는 추가하지 않음
-                if len(record) == 7:
-                    name, ticker, price, trend, rsi, rate, rate_color = record
-                else:
-                    name, ticker, price, trend, rsi, rate = record
-                    rate_color = "black"
+            if record and len(record) == 13:  # Ensure we have 13 values in the record
+                # Unpack the data record
+                (
+                    name,
+                    ticker,
+                    price,
+                    trend,
+                    rsi,
+                    rate,
+                    rate_color,
+                    macd_signal,
+                    signal_line,
+                    macd_histogram,
+                    upper_band,
+                    lower_band,
+                    middle_band
+                ) = record
 
-                trend_display = trend  # 추세 신호 표시
-
+                # Prepare the data for display
+                trend_display = trend
                 rsi_value = float(rsi.replace('%', ''))  # RSI 값 처리
                 if rsi_value > 70:
                     rsi_display = f"{rsi} (과매수)"
@@ -141,66 +233,74 @@ def update_table(data):
                 else:
                     rsi_display = f"{rsi} (중립)"
 
-                row_id = table.insert("", "end", values=(f"{name} ({ticker})", price, trend_display, rsi_display, rate))
-                if "BUY" in trend:
-                    table.item(row_id, tags=("buy",))
-                elif "SELL" in trend:
-                    table.item(row_id, tags=("sell",))
-                else:
-                    table.item(row_id, tags=("hold",))
+                # Insert the data into the table
+                row_id = table.insert("", "end", values=(
+                    f"{name} ({ticker})",  # Stock name and ticker
+                    price,  # Current price
+                    trend_display,  # Trend signal (BUY, SELL, HOLD)
+                    rsi_display,  # RSI signal
+                    rate,  # Rate of change
+                    macd_signal,  # MACD signal
+                    signal_line,  # Signal line value
+                    macd_histogram,  # MACD Histogram value
+                    upper_band,  # Upper Bollinger Band
+                    lower_band,  # Lower Bollinger Band
+                    middle_band  # Middle Bollinger Band
+                ))
+
+                # Set color for the rate
                 table.tag_configure(f"rate_{row_id}", foreground=rate_color)
                 table.item(row_id, tags=(f"rate_{row_id}",))
 
-        # Keep minimum column widths even when empty
+        # Dynamically adjust column width
         min_widths = {
             "종목명": 150,
             "현재가": 100,
             "추세 신호": 200,
             "RSI 신호": 150,
-            "수익률": 100
+            "수익률": 100,
+            "MACD 신호": 150,
+            "Signal Line": 100,
+            "MACD Histogram": 100,
+            "Upper Band": 100,
+            "Lower Band": 100,
+            "Middle Band": 100
         }
 
         for col, width in min_widths.items():
             table.column(col, width=width, minwidth=width)
 
-        # Dynamically adjust column width based on content if there's data
-        if data:
-            max_width = 0
-            for item in table.get_children():
-                name_value = table.item(item)["values"][0]
-                trend_value = table.item(item)["values"][2]
-                max_width = max(max_width, len(str(name_value)), len(str(trend_value)))
-
-            if max_width * 8 > min_widths["종목명"]:
-                table.column("종목명", width=max_width * 8)
-            if max_width * 8 > min_widths["추세 신호"]:
-                table.column("추세 신호", width=max_width * 8)
-
     except Exception as e:
         print(f"update_table error: {e}")
 
 
+
+# 테이블 및 기타 UI 요소
 # 테이블 및 기타 UI 요소
 def main():
-    global root, table, market_status_label
+    global root, table, market_status_label, time_label
 
     root = tk.Tk()
-    root.title("주식 실시간 모니터링")
+    root.title("미국 주식 실시간 모니터링(매시간 1분)")
 
-    # 시장 상태를 표시할 라벨
-    market_status_label = tk.Label(root, text="현재 시장 상태: 장 종료", font=("Arial", 14))
+    market_status_label = tk.Label(root, text="주식장 종료\n한국 시간: 2025-04-27 11:54:29\n미국 시간: 2025-04-26 22:54:29",
+                                   font=("Arial", 14))
     market_status_label.pack(pady=10)
 
-    frame = tk.Frame(root)
-    frame.pack(pady=10)
-    add_btn = tk.Button(frame, text="종목 추가", command=add_ticker, width=10, height=2)
-    add_btn.grid(row=0, column=0, padx=5)
-    remove_btn = tk.Button(frame, text="종목 삭제", command=remove_ticker, width=10, height=2)
-    remove_btn.grid(row=0, column=1, padx=5)
+    # Button frame for adding/removing tickers
+    button_frame = tk.Frame(root)
+    button_frame.pack(pady=10)
 
+    add_button = tk.Button(button_frame, text="종목 추가", command=add_ticker)
+    add_button.pack(side=tk.LEFT, padx=10)
+
+    remove_button = tk.Button(button_frame, text="종목 삭제", command=remove_ticker)
+    remove_button.pack(side=tk.LEFT, padx=10)
+
+    # UI 초기화
     table_frame = tk.Frame(root)
     table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률")
+    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "Signal Line", "MACD Histogram", "Upper Band", "Lower Band", "Middle Band")
     table = ttk.Treeview(table_frame, columns=columns, show="headings")
     vsb = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
     hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=table.xview)
@@ -215,7 +315,13 @@ def main():
         "현재가": 100,
         "추세 신호": 200,
         "RSI 신호": 150,
-        "수익률": 100
+        "수익률": 100,
+        "MACD 신호": 150,
+        "Signal Line": 100,
+        "MACD Histogram": 100,
+        "Upper Band": 100,
+        "Lower Band": 100,
+        "Middle Band": 100
     }
 
     for col in columns:
@@ -226,21 +332,18 @@ def main():
     table.tag_configure("sell", background="#ffe0e0")
     table.tag_configure("hold", background="#f0f0f0")
 
-    status_bar = tk.Label(root, text="데이터 로딩 중...", bd=1, relief=tk.SUNKEN, anchor=tk.W)
-    status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+    # 데이터 로드 및 테이블 갱신
+    load_watchlist()  # watchlist 로드
+    refresh_table_once()  # 테이블 한 번 갱신
 
-    load_watchlist()
-    refresh_table_once()
-
-    if not watchlist:
-        status_bar.config(text="종목 추가 버튼을 눌러 감시할 종목을 추가하세요.")
-    else:
-        status_bar.config(text=f"{len(watchlist)}개 종목 감시 중...")
-
+    # 주식 감시 목록을 계속 모니터링
     threading.Thread(target=monitor_stocks, args=(update_table,), daemon=True).start()
 
     # 장 상태 갱신 시작
     update_market_status()
+
+    # Bind double-click event to table for opening graph
+    table.bind("<Double-1>", on_item_double_click)
 
     root.mainloop()
 
