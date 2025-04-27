@@ -4,11 +4,15 @@ from datetime import datetime
 import config  # config 모듈 임포트
 import random
 
+from market_trend_manager import MarketTrendManager
+
 # 각 지표의 신뢰도 점수 (예시)
 RSI_confidence = 0.7  # 70% 확률로 유효한 매수 신호
 MACD_confidence = 0.8  # 80% 확률로 유효한 매도 신호
 MA_confidence = 0.6  # 60% 확률로 유효한 매도 신호
 BB_confidence = 0.75  # 75% 확률로 유효한 매수 신호
+
+score_mtm = MarketTrendManager()
 
 def update_period_interval(period, interval):
     config.config["current_period"] = period
@@ -134,10 +138,27 @@ def fetch_stock_data(ticker):
 
         # Fetch company name and current price
         company_name = ticker_data.info.get('shortName', 'Unknown Company')
-        current_price = ticker_data.info.get('regularMarketPrice', None)
+
+        session = score_mtm.guess_market_session()
+        if session == "정규장":
+            current_price = ticker_data.info.get('regularMarketPrice', 0)
+        elif session == "프리장":
+            current_price = ticker_data.info.get('preMarketPrice', ticker_data.info.get('regularMarketPrice', 0))
+        elif session == "애프터장":
+            current_price = ticker_data.info.get('postMarketPrice', ticker_data.info.get('regularMarketPrice', 0))
+        else:
+            current_price = ticker_data.info.get('regularMarketPrice', 0)
 
         if current_price is None or isinstance(current_price, str):
             current_price = 0  # Default value if current price is unavailable
+
+        market_source = score_mtm.guess_market_source(ticker)
+        if market_source == "QQQ":
+            market_manager_qqq = MarketTrendManager('QQQ')
+            market_trend = market_manager_qqq.get_market_trend()
+        else:
+            market_manager_spy = MarketTrendManager('SPY')
+            market_trend = market_manager_spy.get_market_trend()
 
         # Calculate RSI and moving averages (MA5, MA20)
         rsi = calculate_rsi(historical_data, config.config["current_rsi"])  # Assuming you have this function defined
@@ -194,6 +215,7 @@ def fetch_stock_data(ticker):
             rsi_signal = "BUY"
 
         momentum_signal = generate_momentum_signal(rsi_signal, macd_simple_signal, trend_simple_signal, bb_signal)
+        adjusted_momentum_signal = score_mtm.adjust_momentum_based_on_market(momentum_signal, market_trend)
 
         # Return all data in a tuple (or dictionary if preferred)
         return (
@@ -206,7 +228,7 @@ def fetch_stock_data(ticker):
             rate_color,  # Rate color (green, red, black)
             macd_signal,  # MACD Signal (BUY/SELL/HOLD)
             bb_signal,  # Bollinger Bands Signal (BUY/SELL/HOLD)
-            momentum_signal  # Momentum_Signal (BUY/SELL/HOLD)
+            adjusted_momentum_signal  # Momentum_Signal (BUY/SELL/HOLD)
         )
 
     except Exception as e:

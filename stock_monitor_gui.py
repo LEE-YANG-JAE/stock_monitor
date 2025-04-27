@@ -8,6 +8,8 @@ import os
 import numpy as np
 import pytz
 import yfinance as yf
+
+from market_trend_manager import MarketTrendManager
 from stock_score import fetch_stock_data, calculate_rsi, calculate_moving_average, is_market_open
 import re
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -17,6 +19,8 @@ import config
 # 다중 종목 감시용 GUI
 watchlist = []
 SAVE_FILE = "watchlist.json"
+
+mtm = MarketTrendManager()
 
 def on_radio_select():
     selected_value = radio_var.get()
@@ -161,12 +165,7 @@ def update_market_status():
     korea_time = datetime.now(korea_timezone).strftime("%Y-%m-%d %H:%M:%S")
     new_york_time = datetime.now(new_york_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
-    # Get market status
-    if is_market_open():
-        status = "주식장 중"
-    else:
-        status = "주식장 종료"
-
+    status = mtm.guess_market_session()
     # Construct the full text
     full_text = f"{status}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
 
@@ -305,7 +304,7 @@ def main():
     root = tk.Tk()
     root.title("미국 주식 실시간 모니터링(매 1분)")
 
-    market_status_label = tk.Label(root, text="주식장 종료\n한국 시간: 2025-04-27 11:54:29\n미국 시간: 2025-04-26 22:54:29",
+    market_status_label = tk.Label(root, text="주식장 종료\n한국 시간:\n미국 시간:",
                                    font=("Arial", 14))
     market_status_label.pack(pady=10)
 
