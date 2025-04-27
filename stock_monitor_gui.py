@@ -249,7 +249,8 @@ def update_table(data):
                     rate,
                     rate_color,
                     macd_signal,
-                    bb_signal
+                    bb_signal,
+                    momentum_signal
                 ) = record
 
                 # Prepare the data for display
@@ -270,7 +271,8 @@ def update_table(data):
                     rsi_display,  # RSI signal
                     rate,  # Rate of change
                     macd_signal,  # MACD signal
-                    bb_signal  # Signal line value
+                    bb_signal,  # Signal line value
+                    momentum_signal  # Momentum_Signal (BUY/SELL/HOLD)
                 ))
 
                 # Set color for the rate
@@ -285,7 +287,8 @@ def update_table(data):
             "RSI 신호": 150,
             "수익률": 100,
             "MACD 신호": 150,
-            "BB 신호": 150
+            "BB 신호": 150,
+            "모멘텀 신호": 150
         }
 
         for col, width in min_widths.items():
@@ -334,7 +337,7 @@ def main():
     # UI 초기화
     table_frame = tk.Frame(root)
     table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "BB 신호")
+    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "BB 신호", "모멘텀 신호")
     table = ttk.Treeview(table_frame, columns=columns, show="headings")
     vsb = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
     hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=table.xview)
@@ -351,7 +354,8 @@ def main():
         "RSI 신호": 150,
         "수익률": 100,
         "MACD 신호": 150,
-        "BB 신호": 150
+        "BB 신호": 150,
+        "모멘텀 신호": 150,
     }
 
     for col in columns:

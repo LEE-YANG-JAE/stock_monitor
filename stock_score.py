@@ -2,6 +2,13 @@ import yfinance as yf
 import pytz
 from datetime import datetime
 import config  # config 모듈 임포트
+import random
+
+# 각 지표의 신뢰도 점수 (예시)
+RSI_confidence = 0.7  # 70% 확률로 유효한 매수 신호
+MACD_confidence = 0.8  # 80% 확률로 유효한 매도 신호
+MA_confidence = 0.6  # 60% 확률로 유효한 매도 신호
+BB_confidence = 0.75  # 75% 확률로 유효한 매수 신호
 
 def update_period_interval(period, interval):
     config.config["current_period"] = period
@@ -82,6 +89,39 @@ def calculate_bollinger_bands(historical_data, window=20):
 
     return upper_band, lower_band, rolling_mean
 
+# 각 지표가 주는 신뢰도를 기반으로 확률적으로 결정
+def generate_momentum_signal(rsi_signal, macd_signal, ma_signal, bb_signal):
+    # 각 신호가 유효한 경우, 확률적으로 결정
+    momentum_score = 0
+
+    if rsi_signal == "BUY" and random.random() < RSI_confidence:
+        momentum_score += 1
+    elif rsi_signal == "SELL" and random.random() < (1 - RSI_confidence):
+        momentum_score -= 1
+
+    if macd_signal == "BUY" and random.random() < MACD_confidence:
+        momentum_score += 1
+    elif macd_signal == "SELL" and random.random() < (1 - MACD_confidence):
+        momentum_score -= 1
+
+    if ma_signal == "BUY" and random.random() < MA_confidence:
+        momentum_score += 1
+    elif ma_signal == "SELL" and random.random() < (1 - MA_confidence):
+        momentum_score -= 1
+
+    if bb_signal == "BUY" and random.random() < BB_confidence:
+        momentum_score += 1
+    elif bb_signal == "SELL" and random.random() < (1 - BB_confidence):
+        momentum_score -= 1
+
+    # 모멘텀 신호 결정
+    if momentum_score > 1:
+        return "BUY"
+    elif momentum_score < -1:
+        return "SELL"
+    else:
+        return "HOLD"
+
 # 종목 데이터 가져오기
 def fetch_stock_data(ticker):
     try:
@@ -109,12 +149,16 @@ def fetch_stock_data(ticker):
         upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data, config.config["current_bollinger"])
 
         # Calculate MACD Signal: BUY, SELL, or HOLD based on MACD crossover
+        macd_simple_signal = ''
         if macd.iloc[-1] > signal_line.iloc[-1]:  # MACD crosses above Signal Line (BUY)
             macd_signal = f"BUY ({macd.iloc[-1]:.2f})"
+            macd_simple_signal = 'BUY'
         elif macd.iloc[-1] < signal_line.iloc[-1]:  # MACD crosses below Signal Line (SELL)
             macd_signal = f"SELL ({macd.iloc[-1]:.2f})"
+            macd_simple_signal = 'SELL'
         else:  # MACD and Signal Line are flat (HOLD)
             macd_signal = f"HOLD ({macd.iloc[-1]:.2f})"
+            macd_simple_signal = 'HOLD'
 
         # Rate calculation (percentage change) and color code for the rate
         rate = ticker_data.info.get('regularMarketChangePercent', 0)
@@ -127,18 +171,29 @@ def fetch_stock_data(ticker):
         # Trend Signal based on the comparison of moving averages (MA5 vs MA20)
         if ma5 > ma20:
             trend_signal = f"BUY (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
+            trend_simple_signal = 'BUY'
         elif ma5 < ma20:
             trend_signal = f"SELL (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
+            trend_simple_signal = 'SELL'
         else:
             trend_signal = f"HOLD (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
+            trend_simple_signal = 'HOLD'
 
         # Bollinger Bands Signal: BUY, SELL, or HOLD based on the price position relative to the bands
+        bb_signal = "HOLD"
         if current_price > upper_band.iloc[-1]:
             bb_signal = "SELL"
         elif current_price < lower_band.iloc[-1]:
             bb_signal = "BUY"
-        else:
-            bb_signal = "HOLD"
+
+        # RSI Signal
+        rsi_signal = "HOLD"
+        if rsi > 70:
+            rsi_signal = "SELL"
+        elif rsi < 30:
+            rsi_signal = "BUY"
+
+        momentum_signal = generate_momentum_signal(rsi_signal, macd_simple_signal, trend_simple_signal, bb_signal)
 
         # Return all data in a tuple (or dictionary if preferred)
         return (
@@ -150,7 +205,8 @@ def fetch_stock_data(ticker):
             f"{round(rate, 2):.2f}%",  # Rate of Change
             rate_color,  # Rate color (green, red, black)
             macd_signal,  # MACD Signal (BUY/SELL/HOLD)
-            bb_signal  # Bollinger Bands Signal (BUY/SELL/HOLD)
+            bb_signal,  # Bollinger Bands Signal (BUY/SELL/HOLD)
+            momentum_signal  # Momentum_Signal (BUY/SELL/HOLD)
         )
 
     except Exception as e:
