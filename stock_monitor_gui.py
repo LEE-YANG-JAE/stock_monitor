@@ -25,10 +25,16 @@ def on_radio_select():
     if selected_value == "short":
         config.config["current_period"] = "14d"  # 단기 데이터
         config.config["current_interval"] = "1m"  # 1분 간격
+        config.config["current_rsi"] = 14  # 단기 RSI 기간 설정
+        config.config["current_macd"] = [12, 26, 9]  # 단기 MACD 설정
+        config.config["current_bollinger"] = 7  # 단기 Bollinger Bands 설정
         print("단기 데이터가 선택되었습니다.")
     elif selected_value == "long":
         config.config["current_period"] = "6mo"  # 장기 데이터
-        config.config["current_interval"] = "1m"  # 1분 간격
+        config.config["current_interval"] = "1d"  # 1일 간격
+        config.config["current_rsi"] = 30  # 장기 RSI 기간 설정
+        config.config["current_macd"] = [12, 30, 9]  # 장기 MACD 설정
+        config.config["current_bollinger"] = 30  # 장기 Bollinger Bands 설정
         print("장기 데이터가 선택되었습니다.")
 
     # 설정을 저장
@@ -128,12 +134,23 @@ def refresh_table_once():
 # 주식 데이터 주기적으로 갱신
 def monitor_stocks(update_table_func):
     while True:
+        try:
+            results = []
+            for ticker in watchlist:
+                result = fetch_stock_data(ticker)
+                if result:  # None이 아닌 데이터만 추가
+                    results.append(result)
+            update_table_func(results)
+        except Exception as e:
+            print(f"monitor_stocks error: {e}")
+
         if is_market_open():
             # 장중일 경우 1분 간격으로 데이터 갱신
             print("시장 열림 - 데이터 갱신 중...")
-
-        time.sleep(60)  # 1분 간격으로 실행
-
+            time.sleep(60)  # 1분 간격으로 실행
+        else:
+            print("시장 종료 - 데이터 갱신 중단...")
+            break
 
 # 주식 시장 상태를 표시할 라벨 추가
 def update_market_status():

@@ -5,9 +5,12 @@ CONFIG_FILE = 'config.json'
 
 # 기본 설정 값
 default_config = {
-    "current_period": "14d",  # 단기 데이터 기본 설정
-    "current_interval": "1m",  # 1분 간격 기본 설정
-    "view_mode": "short"  # 기본값: short (단기)
+  "view_mode": "short",      # 기본값: short (단기)
+  "current_period": "14d",   # 단기 데이터 기본 설정
+  "current_interval": "1m",  # 1분 간격 기본 설정
+  "current_rsi": 14,       # 단기 RSI 기간 설정
+  "current_macd": [12, 26, 9],   # 단기 MACD 설정
+  "current_bollinger": 14, # 단기 Bollinger Bands 설정
 }
 
 

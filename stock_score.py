@@ -60,13 +60,13 @@ def calculate_rsi(historical_data, period=14):
     return rsi.iloc[-1]  # 마지막 값만 반환
 
 # MACD 계산 함수
-def calculate_macd(historical_data):
+def calculate_macd(historical_data, period=(12, 26, 9)):
     # 12일, 26일 EMA를 사용하여 MACD 계산
-    short_ema = historical_data['Close'].ewm(span=9, adjust=False).mean()
-    long_ema = historical_data['Close'].ewm(span=21, adjust=False).mean()
+    short_ema = historical_data['Close'].ewm(span=period[0], adjust=False).mean()
+    long_ema = historical_data['Close'].ewm(span=period[1], adjust=False).mean()
 
     macd = short_ema - long_ema  # MACD Line
-    signal_line = macd.ewm(span=9, adjust=False).mean()  # Signal Line
+    signal_line = macd.ewm(span=period[2], adjust=False).mean()  # Signal Line
     macd_histogram = macd - signal_line  # MACD Histogram
 
     return macd, signal_line, macd_histogram
@@ -90,17 +90,7 @@ def fetch_stock_data(ticker):
         if is_market_open():
             historical_data = ticker_data.history(period=config.config["current_period"], interval=config.config["current_interval"])
         else:
-            historical_data = ticker_data.history(period=config.config["current_period"])  # 비장중에는 1일 단위 또는 3개월 데이터 요청
-
-        # 단기 데이터 요청 시, 주말 데이터가 없으면 가장 최근 데이터로 대체
-        if historical_data.index[-1].weekday() == 6:  # 일요일일 경우
-            # NaN 값이 있으면 최근 데이터를 사용해 NaN 값을 채우기
-            historical_data = historical_data.ffill()  # NaN 값을 최근 값으로 채움
-
-        # 데이터를 계산할 때 NaN 값이 있다면, 데이터에서 NaN을 제거하거나 가장 최근 값을 사용
-        if historical_data.isna().sum().sum() > 0:
-            print(f"NaN 값이 존재하는 데이터를 제거합니다: {ticker}")
-            historical_data = historical_data.dropna()  # NaN 값을 제거
+            historical_data = ticker_data.history(period=config.config["current_period"])
 
         # Fetch company name and current price
         company_name = ticker_data.info.get('shortName', 'Unknown Company')
@@ -110,13 +100,13 @@ def fetch_stock_data(ticker):
             current_price = 0  # Default value if current price is unavailable
 
         # Calculate RSI and moving averages (MA5, MA20)
-        rsi = calculate_rsi(historical_data)  # Assuming you have this function defined
+        rsi = calculate_rsi(historical_data, config.config["current_rsi"])  # Assuming you have this function defined
         ma5 = calculate_moving_average(historical_data, days=5)
         ma20 = calculate_moving_average(historical_data, days=20)
 
         # Calculate MACD and Bollinger Bands
-        macd, signal_line, macd_histogram = calculate_macd(historical_data)
-        upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data)
+        macd, signal_line, macd_histogram = calculate_macd(historical_data, config.config["current_macd"])
+        upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data, config.config["current_bollinger"])
 
         # Calculate MACD Signal: BUY, SELL, or HOLD based on MACD crossover
         if macd.iloc[-1] > signal_line.iloc[-1]:  # MACD crosses above Signal Line (BUY)
