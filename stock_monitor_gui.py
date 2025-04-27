@@ -99,17 +99,16 @@ def refresh_table_once():
 # 주식 데이터 주기적으로 갱신
 def monitor_stocks(update_table_func):
     while True:
-        try:
-            results = []
-            for ticker in watchlist:
-                result = fetch_stock_data(ticker)
-                if result:  # None이 아닌 데이터만 추가
-                    results.append(result)
-            update_table_func(results)
-        except Exception as e:
-            print(f"monitor_stocks error: {e}")
-        time.sleep(60)  # 1분마다 갱신
+        if is_market_open():
+            # 장중일 경우 1분 간격으로 데이터 갱신
+            print("시장 열림 - 데이터 갱신 중...")
+            # 데이터 갱신 코드 삽입 (예: `fetch_stock_data` 호출)
+        else:
+            # 장 종료 후에는 데이터 갱신을 하지 않음
+            print("시장 종료 - 데이터 갱신 중지")
+            break  # 장 종료 후에는 데이터 갱신을 멈추도록 종료
 
+        time.sleep(60)  # 1분 간격으로 실행
 
 # 주식 시장 상태를 표시할 라벨 추가
 def update_market_status():

@@ -82,10 +82,12 @@ def fetch_stock_data(ticker):
         # Determine if the market is open
         if is_market_open():
             ticker_data = yf.Ticker(ticker)
-            historical_data = ticker_data.history(period="1d", interval="1m")  # Intraday data (1-minute interval)
+            # 실시간 데이터(1분 간격)
+            historical_data = ticker_data.history(period="1d", interval="1m")  # 1분 단위
         else:
             ticker_data = yf.Ticker(ticker)
-            historical_data = ticker_data.history(period="3y")  # Historical data for market close
+            # 비개장 시간에는 1일 단위 데이터
+            historical_data = ticker_data.history(period="3y", interval="1d")  # 1일 단위
 
         # Fetch company name and current price
         company_name = ticker_data.info.get('shortName', 'Unknown Company')
