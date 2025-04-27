@@ -25,6 +25,10 @@ default_config = {
             "bollinger": 30,  # 단기 Bollinger Bands 설정
         }
     },
+    "backtest": {
+        "period_value": 12,  # 숫자 (예: 12)
+        "period_unit": "mo",  # 단위 (d=일, mo=월, y=년)
+    }
 }
 
 

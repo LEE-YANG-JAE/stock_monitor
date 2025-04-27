@@ -17,6 +17,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import config
 from market_trend_manager import guess_market_session
 from stock_score import fetch_stock_data, is_market_open
+from backtest_popup import open_backtest_popup
 
 # 다중 종목 감시용 GUI
 watchlist = []
@@ -139,6 +140,7 @@ def load_watchlist():
 def refresh_table_once():
     try:
         results = []
+
         def fetch_and_collect(ticker):
             result = fetch_stock_data(ticker)
             if result:
@@ -146,9 +148,6 @@ def refresh_table_once():
 
         with ThreadPoolExecutor(max_workers=10) as executor:
             executor.map(fetch_and_collect, watchlist)
-
-        # 수익률(rate) 기준으로 정렬
-        results.sort(key=lambda x: float(x[5].replace('%', '')), reverse=True)  # 5번 인덱스가 rate
 
         update_table(results)  # 테이블을 갱신
     except Exception as e:
@@ -195,57 +194,8 @@ def update_market_status():
 
 
 def on_item_double_click(event):
-    selected_item = table.selection()[0]
-    ticker = table.item(selected_item)['values'][0].split('(')[-1].split(')')[0]  # Extract ticker
-
-    # Fetch stock data for the selected ticker with a longer period
-    data = fetch_stock_data(ticker)  # Fetch data for 1 year to ensure sufficient historical data
-    if data is None:
-        return
-
-    # Unpack the data
-    _, _, _, _, _, _, _, macd_signal, signal_line, macd_histogram, upper_band, lower_band, middle_band = data
-
-    # Check if upper_band and lower_band are scalar values (numpy.float64)
-    if isinstance(upper_band, (float, int, np.float64)):
-        upper_band = [upper_band]  # Wrap in a list if it's a scalar value
-
-    if isinstance(lower_band, (float, int, np.float64)):
-        lower_band = [lower_band]  # Wrap in a list if it's a scalar value
-
-    # MACD Histogram should be an array of values, not a single float
-    if isinstance(macd_histogram, float):
-        macd_histogram = [macd_histogram]  # Convert to list if it's a single float
-
-    # Create a new window to show the graphs
-    graph_window = tk.Toplevel()
-    graph_window.title(f"{ticker} MACD and Bollinger Bands")
-
-    # Create the figure and axes
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-
-    # MACD plot
-    ax1.plot(macd_signal, label='MACD Line', color='blue')
-    ax1.plot(signal_line, label='Signal Line', color='orange')
-    ax1.bar(range(len(macd_histogram)), macd_histogram, label='MACD Histogram', color='gray', alpha=0.5)
-    ax1.set_title(f"{ticker} - MACD")
-    ax1.legend()
-
-    # Bollinger Bands plot
-    ax2.plot(upper_band, label='Upper Band', color='red', linestyle='--')
-    ax2.plot(lower_band, label='Lower Band', color='green', linestyle='--')
-    ax2.plot(middle_band, label='Middle Band (Moving Average)', color='blue')
-    ax2.fill_between(range(len(upper_band)), upper_band, lower_band, color='yellow', alpha=0.2)
-    ax2.set_title(f"{ticker} - Bollinger Bands")
-    ax2.legend()
-
-    # Convert Matplotlib figure to Tkinter canvas
-    canvas = FigureCanvasTkAgg(fig, master=graph_window)
-    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)  # Ensure it's packed to fill the window
-
-    # Display the graphs
-    canvas.draw()
-
+    selected_item = table.selection()[0]  # Extract ticker
+    open_backtest_popup(table.item(selected_item)['values'][0])
 
 # 테이블에서 매수/매도/보류 신호 표시 및 그래프 표시 추가
 def update_table(data):
@@ -313,9 +263,10 @@ def update_table(data):
     except Exception as e:
         print(f"update_table error: {e}")
 
+
 def show_splash(root):
     splash = tk.Toplevel(root)
-    splash.overrideredirect(True)  # ✨ 타이틀바 제거 (순수한 창)
+    splash.overrideredirect(True)
     width, height = 300, 150
     x = (root.winfo_screenwidth() - width) // 2
     y = (root.winfo_screenheight() - height) // 2
@@ -324,6 +275,7 @@ def show_splash(root):
     splash_label.pack(expand=True)
     splash.update()
     return splash
+
 
 # 테이블 및 기타 UI 요소
 def main():
@@ -411,6 +363,7 @@ def main():
     splash.destroy()  # 2. 초기화 끝나면 로딩창 닫기
     root.deiconify()  # ✅ root 메인 윈도우 보여줌
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
