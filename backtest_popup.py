@@ -14,6 +14,7 @@ plt.rcParams['font.family'] = 'Malgun Gothic'
 
 strategy_options = ["macd", "rsi", "bollinger", "ma_cross", "momentum"]
 
+
 def open_backtest_popup(stock, on_search_callback=None):
     ticker_symbol = stock.split('(')[-1].split(')')[0]
 

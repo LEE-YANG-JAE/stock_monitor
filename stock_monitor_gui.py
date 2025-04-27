@@ -8,16 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from tkinter import simpledialog, messagebox, ttk
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pytz
 import yfinance as yf
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 import config
+from backtest_popup import open_backtest_popup
 from market_trend_manager import guess_market_session
 from stock_score import fetch_stock_data, is_market_open
-from backtest_popup import open_backtest_popup
 
 # 다중 종목 감시용 GUI
 watchlist = []
@@ -196,6 +193,7 @@ def update_market_status():
 def on_item_double_click(event):
     selected_item = table.selection()[0]  # Extract ticker
     open_backtest_popup(table.item(selected_item)['values'][0])
+
 
 # 테이블에서 매수/매도/보류 신호 표시 및 그래프 표시 추가
 def update_table(data):

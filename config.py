@@ -20,14 +20,15 @@ default_config = {
         },
         "long": {
             "period": "6mo",  # 장기 데이터 기본 설정
-            "rsi": 30,  # 단기 RSI 기간 설정
-            "macd": [12, 30, 9],  # 단기 MACD 설정
-            "bollinger": 30,  # 단기 Bollinger Bands 설정
+            "rsi": 14,  # 장기 RSI 기간 설정
+            "macd": [12, 26, 9],  # 장기 MACD 설정
+            "bollinger": 14,  # 장기 Bollinger Bands 설정
         }
     },
     "backtest": {
         "period_value": 12,  # 숫자 (예: 12)
         "period_unit": "mo",  # 단위 (d=일, mo=월, y=년)
+        "method": "macd",
     }
 }
 
