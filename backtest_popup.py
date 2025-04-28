@@ -148,12 +148,26 @@ def open_backtest_popup(stock, on_search_callback=None):
 
     def plot_bollinger(data, buy_dates, sell_dates, ticker_symbol):
         fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(data.index, data['Close'], label='Close Price')
+        ax.plot(data.index, data['Close'], label='Close Price', color='black')
         ax.plot(data.index, data['UpperBand'], label='Upper Band', linestyle='--')
         ax.plot(data.index, data['LowerBand'], label='Lower Band', linestyle='--')
         ax.scatter(buy_dates, data.loc[buy_dates]['Close'], marker='^', color='green', label='Buy Signal', s=100)
         ax.scatter(sell_dates, data.loc[sell_dates]['Close'], marker='v', color='red', label='Sell Signal', s=100)
         ax.set_title(f"{ticker_symbol} Bollinger Band Backtest")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Price")
+        ax.legend()
+        ax.grid()
+        plt.show()
+
+    def plot_ma_cross(data, buy_dates, sell_dates, ticker_symbol):
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.plot(data.index, data['Close'], label='Close Price', color='black')
+        ax.plot(data.index, data['Short_MA'], label='Short MA (5)', linestyle='--')
+        ax.plot(data.index, data['Long_MA'], label='Long MA (20)', linestyle='--')
+        ax.scatter(buy_dates, data.loc[buy_dates]['Close'], marker='^', color='green', label='Buy Signal', s=100)
+        ax.scatter(sell_dates, data.loc[sell_dates]['Close'], marker='v', color='red', label='Sell Signal', s=100)
+        ax.set_title(f"{ticker_symbol} Moving Average Cross Backtest")
         ax.set_xlabel("Date")
         ax.set_ylabel("Price")
         ax.legend()
@@ -283,6 +297,59 @@ def open_backtest_popup(stock, on_search_callback=None):
                 else:
                     print("[볼린저 밴드] 거래 없음")
                     messagebox.showerror("데이터 없음", f"[볼린저 밴드]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
+            case "ma_cross":
+                # 단기 이동평균선(5일)과 장기 이동평균선(20일)을 계산
+                short_window = 5
+                long_window = 20
+
+                short_ma = data['Close'].rolling(window=short_window).mean()
+                long_ma = data['Close'].rolling(window=long_window).mean()
+
+                print("[디버그] 단기/장기 이동평균 생성 완료:", short_ma.head(), long_ma.head())
+
+                # Short_MA, Long_MA 컬럼 데이터프레임에 추가
+                data['Short_MA'] = short_ma
+                data['Long_MA'] = long_ma
+
+                # 매수 조건: 단기 이동평균선이 장기 이동평균선을 상향 돌파
+                buy_signal = short_ma > long_ma
+                sell_signal = short_ma < long_ma
+
+                in_position = False
+                entry_price = 0
+                profits = []
+                buy_dates = []
+                sell_dates = []
+
+                # 거래 진행
+                for i in range(len(data)):
+                    if not in_position and buy_signal.iloc[i]:
+                        in_position = True
+                        entry_price = data['Close'].iloc[i]
+                        buy_dates.append(data.index[i])
+                    elif in_position and sell_signal.iloc[i]:
+                        exit_price = data['Close'].iloc[i]
+                        profit = (exit_price - entry_price) / entry_price
+                        profits.append(profit)
+                        sell_dates.append(data.index[i])
+                        in_position = False
+
+                # 종료 시 남아있는 포지션 처리
+                if in_position:
+                    exit_price = data['Close'].iloc[-1]
+                    profit = (exit_price - entry_price) / entry_price
+                    profits.append(profit)
+
+                # 수익률 출력
+                if profits:
+                    total_return = (1 + pd.Series(profits)).prod() - 1
+                    print(f"[이동평균 교차] 총 수익률: {total_return:.2%}")
+
+                    # 그래프 표시
+                    plot_ma_cross(data, buy_dates, sell_dates, ticker_symbol)
+
+                else:
+                    messagebox.showerror("데이터 없음", f"[이동평균 교차]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
             case _:
                 messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
 
