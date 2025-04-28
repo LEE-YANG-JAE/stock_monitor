@@ -45,6 +45,7 @@ def on_radio_select():
         config.config["current_macd"] = config.config["settings"]["short"]["macd"]
         config.config["current_bollinger"] = config.config["settings"]["short"]["bollinger"]
         config.config["current_bollinger_window"] = config.config["settings"]["short"]["bollinger_window"]
+        config.config["current_bollinger_use_rebound"] = config.config["settings"]["short"]["bollinger_use_rebound"]
         print("단기 데이터가 선택되었습니다.")
     elif selected_value == "long":
         config.config["current_period"] = config.config["settings"]["long"]["period"]
@@ -52,6 +53,7 @@ def on_radio_select():
         config.config["current_macd"] = config.config["settings"]["long"]["macd"]
         config.config["current_bollinger"] = config.config["settings"]["long"]["bollinger"]
         config.config["current_bollinger_window"] = config.config["settings"]["long"]["bollinger_window"]
+        config.config["current_bollinger_use_rebound"] = config.config["settings"]["long"]["bollinger_use_rebound"]
         print("장기 데이터가 선택되었습니다.")
 
     # 설정을 저장

@@ -10,22 +10,25 @@ default_config = {
     "current_interval": "1m",  # 1분 간격 기본 설정
     "current_rsi": 14,  # 단기 RSI 기간 설정
     "current_macd": [12, 26, 9],  # 단기 MACD 설정
-    "current_bollinger": 20,
-    "current_bollinger_window": 2.0,
+    "current_bollinger": 20,  # 이동평균
+    "current_bollinger_window": 2.0,  # 표준편차 2배
+    "current_bollinger_use_rebound": True,  # 볼린저 반등 검증 체크
     "settings": {
         "short": {
             "period": "14d",  # 단기 데이터 기본 설정
             "rsi": 14,  # 단기 RSI 기간 설정
             "macd": [12, 26, 9],  # 단기 MACD 설정
             "bollinger": 20,  # 이동평균
-            "bollinger_window": 2.0, # 표준편차 2배
+            "bollinger_window": 2.0,  # 표준편차 2배
+            "bollinger_use_rebound": False,  # 볼린저 반등 검증 체크
         },
         "long": {
             "period": "1y",  # 장기 데이터 기본 설정
             "rsi": 14,  # 장기 RSI 기간 설정
             "macd": [12, 26, 9],  # 장기 MACD 설정
             "bollinger": 20,  # 이동평균
-            "bollinger_window": 2.0, # 표준편차 2배
+            "bollinger_window": 2.0,  # 표준편차 2배
+            "bollinger_use_rebound": True,  # 반등 검증 체크
         }
     },
     "backtest": {
