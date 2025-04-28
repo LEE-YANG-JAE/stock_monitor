@@ -8,12 +8,24 @@ import yfinance as yf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 import config
+from stock_score import calculate_rsi
 
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'Malgun Gothic'
 
 strategy_options = ["macd", "rsi", "bollinger", "ma_cross", "momentum"]
 
+def calculate_rsi_for_backtest(series, period=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+
+    avg_gain = gain.rolling(window=period, min_periods=1).mean()
+    avg_loss = loss.rolling(window=period, min_periods=1).mean()
+
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 def open_backtest_popup(stock, on_search_callback=None):
     ticker_symbol = stock.split('(')[-1].split(')')[0]
@@ -100,6 +112,40 @@ def open_backtest_popup(stock, on_search_callback=None):
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
+    def plot_rsi_backtest(ticker_symbol, close_prices, rsi, buy_signals, sell_signals):
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+        ax1.plot(close_prices.index, close_prices, label='주가 (Close Price)', color='black')
+        ax1.set_ylabel('가격 ($)')
+        ax1.yaxis.set_major_formatter(ticker.FormatStrFormatter('$%.2f'))
+        ax1.grid()
+
+        for idx, buy in enumerate(buy_signals):
+            ax1.scatter(close_prices.index[buy], close_prices.iloc[buy], marker='^', color='green',
+                        label='Buy Signal' if idx == 0 else "")
+        for idx, sell in enumerate(sell_signals):
+            ax1.scatter(close_prices.index[sell], close_prices.iloc[sell], marker='v', color='red',
+                        label='Sell Signal' if idx == 0 else "")
+
+        ax2.plot(close_prices.index, rsi, label='RSI', color='purple')
+        ax2.axhline(70, color='red', linestyle='--', label='과매수 (70)')
+        ax2.axhline(30, color='green', linestyle='--', label='과매도 (30)')
+        ax2.set_ylabel('RSI 값')
+        ax2.set_ylim(0, 100)
+        ax2.grid()
+
+        ax1.set_title(f"{ticker_symbol} 백테스트 결과 (RSI 기반)")
+
+        lines_labels = [ax.get_legend_handles_labels() for ax in [ax1, ax2]]
+        lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
+        ax1.legend(lines, labels, loc='upper left')
+
+        graph_popup = tk.Toplevel()
+        graph_popup.title(f"{ticker_symbol} 백테스트 결과")
+        canvas = FigureCanvasTkAgg(fig, master=graph_popup)
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        canvas.draw()
+
     def run_backtest(ticker_symbol, value, unit, method):
         now = datetime.now()
         if unit == 'd':
@@ -140,6 +186,20 @@ def open_backtest_popup(stock, on_search_callback=None):
                         sell_signals.append(i)
 
                 plot_macd_backtest(ticker_symbol, close_prices, macd_line, signal_line, buy_signals, sell_signals)
+            case "rsi":
+                period = config.config.get("current_rsi", 14)
+                rsi = calculate_rsi_for_backtest(close_prices, period)
+
+                buy_signals = []
+                sell_signals = []
+
+                for i in range(1, len(rsi)):
+                    if rsi.iloc[i].item() < 30:
+                        buy_signals.append(i)
+                    elif rsi.iloc[i].item() > 70:
+                        sell_signals.append(i)
+
+                plot_rsi_backtest(ticker_symbol, close_prices, rsi, buy_signals, sell_signals)
             case _:
                 messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
 
