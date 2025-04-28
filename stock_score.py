@@ -165,12 +165,28 @@ def fetch_stock_data(ticker):
             trend_signal = f"HOLD (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
             trend_simple_signal = 'HOLD'
 
-        # Bollinger Bands Signal: BUY, SELL, or HOLD based on the price position relative to the bands
+        use_rebound_confirmation = config.config.get("current_bollinger_use_rebound", False)
+
         bb_signal = "HOLD"
-        if current_price > upper_band.iloc[-1]:
-            bb_signal = "SELL"
-        elif current_price < lower_band.iloc[-1]:
-            bb_signal = "BUY"
+        if use_rebound_confirmation:
+            # 반등 검증 활성화된 경우
+            # 최근 2~3일 데이터 이용 (바로 반등 여부 판단)
+            recent_close = historical_data['Close'].iloc[-3:]  # 최근 3개 종가
+            lower_band_recent = lower_band.iloc[-3:]
+            touched_lower = (recent_close <= lower_band_recent).any()
+            rebounded = recent_close.diff().iloc[-1] > 0  # 마지막에 종가 상승 확인
+            if touched_lower and rebounded:
+                bb_signal = "BUY (반등확인)"
+            elif (recent_close >= upper_band.iloc[-3:]).any() and recent_close.diff().iloc[-1] < 0:
+                bb_signal = "SELL (반락확인)"
+            else:
+                bb_signal = "HOLD"
+        else:
+            # 기존 방식
+            if current_price > upper_band.iloc[-1]:
+                bb_signal = "SELL"
+            elif current_price < lower_band.iloc[-1]:
+                bb_signal = "BUY"
 
         # RSI Signal
         rsi_signal = "HOLD"
