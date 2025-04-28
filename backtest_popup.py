@@ -180,6 +180,15 @@ def open_backtest_popup(stock, on_search_callback=None):
                                       signal, ticker_symbol):
         fig, (ax_price, ax_rsi, ax_macd) = plt.subplots(3, 1, figsize=(14, 10), sharex=True,
                                                         gridspec_kw={'height_ratios': [2, 1, 1]})
+        # 전체화면 전환 코드 추가
+        mng = plt.get_current_fig_manager()
+        try:
+            mng.window.state('zoomed')  # Windows
+        except AttributeError:
+            try:
+                mng.window.showMaximized()  # Mac/Linux
+            except AttributeError:
+                pass
 
         # 가격 차트
         ax_price.plot(data.index, data['Close'], label='Close Price', color='black', linewidth=1.5)
