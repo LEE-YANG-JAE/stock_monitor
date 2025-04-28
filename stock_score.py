@@ -93,8 +93,8 @@ def calculate_bollinger_bands(historical_data, window=20):
     rolling_mean = historical_data['Close'].rolling(window=window).mean()
     rolling_std = historical_data['Close'].rolling(window=window).std()
 
-    upper_band = rolling_mean + (rolling_std * 2)  # Upper Band
-    lower_band = rolling_mean - (rolling_std * 2)  # Lower Band
+    upper_band = rolling_mean + (rolling_std * config.config.get("current_bollinger_window", 2.0))  # Upper Band
+    lower_band = rolling_mean - (rolling_std * config.config.get("current_bollinger_window", 2.0))  # Lower Band
 
     return upper_band, lower_band, rolling_mean
 

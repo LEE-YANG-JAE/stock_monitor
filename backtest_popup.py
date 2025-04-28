@@ -4,11 +4,11 @@ from tkinter import ttk, messagebox
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import pandas as pd
 import yfinance as yf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 import config
-from stock_score import calculate_rsi
 
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'Malgun Gothic'
@@ -146,6 +146,20 @@ def open_backtest_popup(stock, on_search_callback=None):
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
+    def plot_bollinger(data, buy_dates, sell_dates, ticker_symbol):
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.plot(data.index, data['Close'], label='Close Price')
+        ax.plot(data.index, data['UpperBand'], label='Upper Band', linestyle='--')
+        ax.plot(data.index, data['LowerBand'], label='Lower Band', linestyle='--')
+        ax.scatter(buy_dates, data.loc[buy_dates]['Close'], marker='^', color='green', label='Buy Signal', s=100)
+        ax.scatter(sell_dates, data.loc[sell_dates]['Close'], marker='v', color='red', label='Sell Signal', s=100)
+        ax.set_title(f"{ticker_symbol} Bollinger Band Backtest")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Price")
+        ax.legend()
+        ax.grid()
+        plt.show()
+
     def run_backtest(ticker_symbol, value, unit, method):
         now = datetime.now()
         if unit == 'd':
@@ -158,11 +172,20 @@ def open_backtest_popup(stock, on_search_callback=None):
             start = now
 
         data = yf.download(ticker_symbol, start=start.strftime('%Y-%m-%d'), end=now.strftime('%Y-%m-%d'))
+
+        # MultiIndex 방지: 컬럼과 인덱스 모두 평탄화
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+        if isinstance(data.index, pd.MultiIndex):
+            data = data.droplevel(0, axis=0)
+
         if data.empty:
             messagebox.showerror("데이터 없음", f"{ticker_symbol}에 대한 데이터를 가져올 수 없습니다.")
             return
+        print("[디버그] 현재 data.columns:", data.columns.tolist())
 
         close_prices = data['Close']
+        print("[디버그] Close 데이터:", close_prices.head())
 
         match method:
             case "macd":
@@ -200,6 +223,67 @@ def open_backtest_popup(stock, on_search_callback=None):
                         sell_signals.append(i)
 
                 plot_rsi_backtest(ticker_symbol, close_prices, rsi, buy_signals, sell_signals)
+            case "bollinger":
+                window = config.config.get("current_bollinger", 20)
+                num_std = config.config.get("current_bollinger_window", 2.0)
+
+                ma = close_prices.rolling(window=window).mean()
+                std = close_prices.rolling(window=window).std()
+                upper_band = ma + (std * num_std)
+                lower_band = ma - (std * num_std)
+
+                print("[디버그] MA 생성 완료:", ma.head())
+                print("[디버그] STD 생성 완료:", std.head())
+                upper_band_df = pd.DataFrame({'UpperBand': upper_band})
+                lower_band_df = pd.DataFrame({'LowerBand': lower_band})
+                print("[디버그] UpperBand, LowerBand 생성 완료:")
+                print(pd.concat([upper_band_df, lower_band_df], axis=1).head())
+
+                data['MA'] = ma
+                data['STD'] = std
+                data['UpperBand'] = upper_band
+                data['LowerBand'] = lower_band
+
+                expected_cols = ['LowerBand', 'UpperBand']
+                if all(col in data.columns for col in expected_cols):
+                    data = data.dropna(subset=expected_cols)
+                else:
+                    print(f"[경고] {expected_cols} 컬럼이 존재하지 않습니다. 현재 컬럼들: {data.columns.tolist()}")
+
+                buy_signal = data['Close'] < data['LowerBand']
+                sell_signal = data['Close'] > data['UpperBand']
+
+                in_position = False
+                entry_price = 0
+                profits = []
+                buy_dates = []
+                sell_dates = []
+
+                for i in range(len(data)):
+                    if not in_position and buy_signal.iloc[i]:
+                        in_position = True
+                        entry_price = data['Close'].iloc[i]
+                        buy_dates.append(data.index[i])
+                    elif in_position and sell_signal.iloc[i]:
+                        exit_price = data['Close'].iloc[i]
+                        profit = (exit_price - entry_price) / entry_price
+                        profits.append(profit)
+                        sell_dates.append(data.index[i])
+                        in_position = False
+
+                if in_position:
+                    exit_price = data['Close'].iloc[-1]
+                    profit = (exit_price - entry_price) / entry_price
+                    profits.append(profit)
+
+                if profits:
+                    total_return = (1 + pd.Series(profits)).prod() - 1
+                    print(f"[볼린저 밴드] 총 수익률: {total_return:.2%}")
+
+                    plot_bollinger(data, buy_dates, sell_dates, ticker_symbol)
+
+                else:
+                    print("[볼린저 밴드] 거래 없음")
             case _:
                 messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
 
