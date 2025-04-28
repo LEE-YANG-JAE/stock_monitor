@@ -98,41 +98,6 @@ def calculate_bollinger_bands(historical_data, window=20):
 
     return upper_band, lower_band, rolling_mean
 
-
-# 각 지표가 주는 신뢰도를 기반으로 확률적으로 결정
-def generate_momentum_signal(rsi_signal, macd_signal, ma_signal, bb_signal):
-    # 각 신호가 유효한 경우, 확률적으로 결정
-    momentum_score = 0
-
-    if rsi_signal == "BUY" and random.random() < RSI_confidence:
-        momentum_score += 1
-    elif rsi_signal == "SELL" and random.random() < (1 - RSI_confidence):
-        momentum_score -= 1
-
-    if macd_signal == "BUY" and random.random() < MACD_confidence:
-        momentum_score += 1
-    elif macd_signal == "SELL" and random.random() < (1 - MACD_confidence):
-        momentum_score -= 1
-
-    if ma_signal == "BUY" and random.random() < MA_confidence:
-        momentum_score += 1
-    elif ma_signal == "SELL" and random.random() < (1 - MA_confidence):
-        momentum_score -= 1
-
-    if bb_signal == "BUY" and random.random() < BB_confidence:
-        momentum_score += 1
-    elif bb_signal == "SELL" and random.random() < (1 - BB_confidence):
-        momentum_score -= 1
-
-    # 모멘텀 신호 결정
-    if momentum_score > 1:
-        return "BUY"
-    elif momentum_score < -1:
-        return "SELL"
-    else:
-        return "HOLD"
-
-
 # 종목 데이터 가져오기
 def fetch_stock_data(ticker):
     try:

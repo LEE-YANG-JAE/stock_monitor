@@ -4,11 +4,13 @@ from tkinter import ttk, messagebox
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import numpy as np
 import pandas as pd
 import yfinance as yf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 import config
+from stock_score import calculate_bollinger_bands
 
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'Malgun Gothic'
@@ -172,6 +174,53 @@ def open_backtest_popup(stock, on_search_callback=None):
         ax.set_ylabel("Price")
         ax.legend()
         ax.grid()
+        plt.show()
+
+    def plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates, rsi, macd,
+                                      signal, ticker_symbol):
+        fig, (ax_price, ax_rsi, ax_macd) = plt.subplots(3, 1, figsize=(14, 10), sharex=True,
+                                                        gridspec_kw={'height_ratios': [2, 1, 1]})
+
+        # 가격 차트
+        ax_price.plot(data.index, data['Close'], label='Close Price', color='black', linewidth=1.5)
+        ax_price.plot(data.index, short_ma, label='Short MA (5)', linestyle='--', color='blue', linewidth=1.5)
+        ax_price.plot(data.index, long_ma, label='Long MA (20)', linestyle='--', color='orange', linewidth=1.5)
+        ax_price.fill_between(data.index, lower_band, upper_band, color='lightgray', alpha=0.3,
+                              label='Bollinger Band Area')
+
+        if buy_dates:
+            ax_price.scatter(buy_dates, data.loc[buy_dates, 'Close'], marker='^', color='green', label='Buy Signal',
+                             s=100, edgecolor='black')
+        if sell_dates:
+            ax_price.scatter(sell_dates, data.loc[sell_dates, 'Close'], marker='v', color='red', label='Sell Signal',
+                             s=100, edgecolor='black')
+
+        # 매수-매도 구간 음영 표시
+        for buy, sell in zip(buy_dates, sell_dates):
+            ax_price.axvspan(buy, sell, color='lightgreen', alpha=0.3)
+
+        ax_price.set_title(f"{ticker_symbol} Momentum Strategy Backtest", fontsize=16)
+        ax_price.set_ylabel("Price")
+        ax_price.legend()
+        ax_price.grid(linestyle='--', alpha=0.7)
+
+        # RSI 차트
+        ax_rsi.plot(data.index, rsi, label='RSI (14)', color='purple')
+        ax_rsi.axhline(70, linestyle='--', color='red', alpha=0.5)
+        ax_rsi.axhline(30, linestyle='--', color='green', alpha=0.5)
+        ax_rsi.set_ylabel("RSI")
+        ax_rsi.legend()
+        ax_rsi.grid(linestyle='--', alpha=0.7)
+
+        # MACD 차트
+        ax_macd.plot(data.index, macd, label='MACD', color='blue')
+        ax_macd.plot(data.index, signal, label='Signal Line', color='red')
+        ax_macd.set_ylabel("MACD")
+        ax_macd.legend()
+        ax_macd.grid(linestyle='--', alpha=0.7)
+
+        plt.xlabel("Date")
+        plt.tight_layout()
         plt.show()
 
     def run_backtest(ticker_symbol, value, unit, method):
@@ -350,6 +399,103 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 else:
                     messagebox.showerror("데이터 없음", f"[이동평균 교차]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
+            case 'momentum':
+                # RSI 계산
+                rsi = calculate_rsi_for_backtest(data['Close'], period=config.config['current_rsi'])
+
+                # 볼린저 밴드 계산
+                window = config.config.get("current_bollinger", 20)
+                upper_band, lower_band, ma = calculate_bollinger_bands(data, window=window)
+
+                # MACD 계산
+                ema12 = data['Close'].ewm(span=config.config['current_macd'][0], adjust=False).mean()
+                ema26 = data['Close'].ewm(span=config.config['current_macd'][1], adjust=False).mean()
+                macd = ema12 - ema26
+                signal = macd.ewm(span=config.config['current_macd'][2], adjust=False).mean()
+
+                # 단기/장기 이동평균선
+                short_ma = data['Close'].rolling(window=5).mean()
+                long_ma = data['Close'].rolling(window=20).mean()
+
+                # 시그널 생성
+                macd_signal_series = pd.Series(np.where(macd > signal, "BUY", "SELL"), index=data.index)
+                ma_signal_series = pd.Series(np.where(short_ma > long_ma, "BUY", "SELL"), index=data.index)
+                bb_signal_series = pd.Series(np.where(data['Close'] < lower_band, "BUY",
+                                                      np.where(data['Close'] > upper_band, "SELL", "HOLD")),
+                                             index=data.index)
+                rsi_signal_series = pd.Series(np.where(rsi < 30, "BUY",
+                                                       np.where(rsi > 70, "SELL", "HOLD")),
+                                              index=data.index)
+
+                # 종합 시그널 계산
+                combined_signal = []
+                for i in range(len(data)):
+                    score = 0
+                    if macd_signal_series.iloc[i] == "BUY":
+                        score += 2
+                    elif macd_signal_series.iloc[i] == "SELL":
+                        score -= 2
+                    if ma_signal_series.iloc[i] == "BUY":
+                        score += 1
+                    elif ma_signal_series.iloc[i] == "SELL":
+                        score -= 1
+                    if bb_signal_series.iloc[i] == "BUY":
+                        score += 1
+                    elif bb_signal_series.iloc[i] == "SELL":
+                        score -= 1
+                    if rsi_signal_series.iloc[i] == "BUY":
+                        score += 1
+                    elif rsi_signal_series.iloc[i] == "SELL":
+                        score -= 1
+
+                    if score >= 4:
+                        combined_signal.append("STRONG BUY")
+                    elif score >= 2:
+                        combined_signal.append("BUY")
+                    elif score <= -4:
+                        combined_signal.append("STRONG SELL")
+                    elif score <= -2:
+                        combined_signal.append("SELL")
+                    else:
+                        combined_signal.append("HOLD")
+
+                combined_signal_series = pd.Series(combined_signal, index=data.index)
+
+                # 결과 저장용
+                in_position = False
+                entry_price = 0
+                profits = []
+                buy_dates = []
+                sell_dates = []
+
+                for i in range(len(data)):
+                    signal_now = combined_signal_series.iloc[i]
+                    if not in_position and (signal_now == "BUY" or signal_now == "STRONG BUY"):
+                        in_position = True
+                        entry_price = data['Close'].iloc[i]
+                        buy_dates.append(data.index[i])
+
+                    elif in_position and (signal_now == "SELL" or signal_now == "STRONG SELL"):
+                        exit_price = data['Close'].iloc[i]
+                        profit = (exit_price - entry_price) / entry_price
+                        profits.append(profit)
+                        sell_dates.append(data.index[i])
+                        in_position = False
+
+                if in_position:
+                    exit_price = data['Close'].iloc[-1]
+                    profit = (exit_price - entry_price) / entry_price
+                    profits.append(profit)
+
+                if profits:
+                    total_return = (1 + pd.Series(profits)).prod() - 1
+                    print(f"[모멘텀] 총 수익률: {total_return:.2%}")
+                else:
+                    print("[모멘텀] 거래 없음")
+
+                # 그래프 출력 함수 호출
+                plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates,
+                                              rsi, macd, signal, ticker_symbol)
             case _:
                 messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
 
