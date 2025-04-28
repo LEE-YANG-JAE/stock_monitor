@@ -400,18 +400,28 @@ def open_backtest_popup(stock, on_search_callback=None):
                 else:
                     messagebox.showerror("데이터 없음", f"[이동평균 교차]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
             case 'momentum':
+                # 사용자 config 값 가져오기
+                macd_short_span = config.config['current_macd'][0]
+                macd_long_span = config.config['current_macd'][1]
+                macd_signal_span = config.config['current_macd'][2]
+                rsi_period = config.config.get('current_rsi', 14)
+                bb_window = config.config.get('current_bollinger', 20)
+                bb_num_std = config.config.get('current_bollinger_window', 2.0)
+
                 # RSI 계산
-                rsi = calculate_rsi_for_backtest(data['Close'], period=config.config['current_rsi'])
+                rsi = calculate_rsi_for_backtest(data['Close'], period=rsi_period)
 
                 # 볼린저 밴드 계산
-                window = config.config.get("current_bollinger", 20)
-                upper_band, lower_band, ma = calculate_bollinger_bands(data, window=window)
+                rolling_mean = data['Close'].rolling(window=bb_window).mean()
+                rolling_std = data['Close'].rolling(window=bb_window).std()
+                upper_band = rolling_mean + (rolling_std * bb_num_std)
+                lower_band = rolling_mean - (rolling_std * bb_num_std)
 
                 # MACD 계산
-                ema12 = data['Close'].ewm(span=config.config['current_macd'][0], adjust=False).mean()
-                ema26 = data['Close'].ewm(span=config.config['current_macd'][1], adjust=False).mean()
-                macd = ema12 - ema26
-                signal = macd.ewm(span=config.config['current_macd'][2], adjust=False).mean()
+                ema_short = data['Close'].ewm(span=macd_short_span, adjust=False).mean()
+                ema_long = data['Close'].ewm(span=macd_long_span, adjust=False).mean()
+                macd = ema_short - ema_long
+                signal = macd.ewm(span=macd_signal_span, adjust=False).mean()
 
                 # 단기/장기 이동평균선
                 short_ma = data['Close'].rolling(window=5).mean()
@@ -493,7 +503,7 @@ def open_backtest_popup(stock, on_search_callback=None):
                 else:
                     print("[모멘텀] 거래 없음")
 
-                # 그래프 출력 함수 호출
+                # 그래프 출력
                 plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates,
                                               rsi, macd, signal, ticker_symbol)
             case _:
