@@ -14,7 +14,7 @@ import yfinance as yf
 import config
 from backtest_popup import open_backtest_popup
 from market_trend_manager import guess_market_session
-from stock_score import fetch_stock_data, is_market_open
+from stock_score import fetch_stock_data
 
 # 다중 종목 감시용 GUI
 watchlist = []

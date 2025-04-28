@@ -120,10 +120,10 @@ def open_backtest_popup(stock, on_search_callback=None):
 
         match method:
             case "macd":
-                macd_short = close_prices.ewm(span=12, adjust=False).mean()
-                macd_long = close_prices.ewm(span=26, adjust=False).mean()
+                macd_short = close_prices.ewm(span=config.config["current_macd"][0], adjust=False).mean()
+                macd_long = close_prices.ewm(span=config.config["current_macd"][1], adjust=False).mean()
                 macd_line = macd_short - macd_long
-                signal_line = macd_line.ewm(span=9, adjust=False).mean()
+                signal_line = macd_line.ewm(span=config.config["current_macd"][2], adjust=False).mean()
 
                 buy_signals = []
                 sell_signals = []
