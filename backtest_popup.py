@@ -279,11 +279,10 @@ def open_backtest_popup(stock, on_search_callback=None):
                 if profits:
                     total_return = (1 + pd.Series(profits)).prod() - 1
                     print(f"[볼린저 밴드] 총 수익률: {total_return:.2%}")
-
                     plot_bollinger(data, buy_dates, sell_dates, ticker_symbol)
-
                 else:
                     print("[볼린저 밴드] 거래 없음")
+                    messagebox.showerror("데이터 없음", f"[볼린저 밴드]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
             case _:
                 messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
 
