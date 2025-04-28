@@ -160,9 +160,10 @@ def monitor_stocks():
         except Exception as e:
             print(f"monitor_stocks error: {e}")
 
-        if is_market_open():
+        session = guess_market_session()
+        if session != "주식장 종료":
             # 장중일 경우 1분 간격으로 데이터 갱신
-            print("시장 열림 - 데이터 갱신 중...")
+            print(f'{session} - 데이터 갱신 중...')
             time.sleep(60)  # 1분 간격으로 실행
         else:
             print("시장 종료 - 데이터 갱신 중단...")
