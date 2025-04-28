@@ -12,7 +12,7 @@ default_config = {
     "current_macd": [12, 26, 9],  # 단기 MACD 설정
     "current_bollinger": 20,  # 이동평균
     "current_bollinger_window": 2.0,  # 표준편차 2배
-    "current_bollinger_use_rebound": True,  # 볼린저 반등 검증 체크
+    "current_bollinger_use_rebound": True,  # 볼린저 반등 검증 체크 - 2일 연속 종가 상승 확인
     "settings": {
         "short": {
             "period": "14d",  # 단기 데이터 기본 설정
@@ -28,7 +28,7 @@ default_config = {
             "macd": [12, 26, 9],  # 장기 MACD 설정
             "bollinger": 20,  # 이동평균
             "bollinger_window": 2.0,  # 표준편차 2배
-            "bollinger_use_rebound": True,  # 반등 검증 체크
+            "bollinger_use_rebound": True,  # 반등 검증 체크 - 2일 연속 종가 상승 확인
         }
     },
     "backtest": {

@@ -295,11 +295,8 @@ def open_backtest_popup(stock, on_search_callback=None):
                 upper_band = ma + (std * num_std)
                 lower_band = ma - (std * num_std)
 
-                print("[디버그] MA 생성 완료:", ma.head())
-                print("[디버그] STD 생성 완료:", std.head())
                 upper_band_df = pd.DataFrame({'UpperBand': upper_band})
                 lower_band_df = pd.DataFrame({'LowerBand': lower_band})
-                print("[디버그] UpperBand, LowerBand 생성 완료:")
                 print(pd.concat([upper_band_df, lower_band_df], axis=1).head())
 
                 data['MA'] = ma
@@ -313,32 +310,57 @@ def open_backtest_popup(stock, on_search_callback=None):
                 else:
                     print(f"[경고] {expected_cols} 컬럼이 존재하지 않습니다. 현재 컬럼들: {data.columns.tolist()}")
 
-                buy_signal = data['Close'] < data['LowerBand']
-                sell_signal = data['Close'] > data['UpperBand']
-
+                use_rebound_confirmation = config.config.get("current_bollinger_use_rebound", False)
+                buy_dates = []
+                sell_dates = []
                 in_position = False
                 entry_price = 0
                 profits = []
-                buy_dates = []
-                sell_dates = []
 
-                for i in range(len(data)):
-                    if not in_position and buy_signal.iloc[i]:
-                        in_position = True
-                        entry_price = data['Close'].iloc[i]
-                        buy_dates.append(data.index[i])
-                    elif in_position and sell_signal.iloc[i]:
-                        exit_price = data['Close'].iloc[i]
+                if use_rebound_confirmation:
+                    # 반등 검증 모드
+                    for i in range(len(data) - 2):
+                        if not in_position:
+                            if data['Close'].iloc[i] < data['LowerBand'].iloc[i]:
+                                # 다음날 종가가 상승했는지만 확인
+                                if data['Close'].iloc[i + 1] > data['Close'].iloc[i]:
+                                    in_position = True
+                                    entry_price = data['Close'].iloc[i + 1]
+                                    buy_dates.append(data.index[i + 1])
+                        else:
+                            if data['Close'].iloc[i] > data['UpperBand'].iloc[i]:
+                                if data['Close'].iloc[i + 1] < data['Close'].iloc[i]:
+                                    exit_price = data['Close'].iloc[i + 1]
+                                    profit = (exit_price - entry_price) / entry_price
+                                    profits.append(profit)
+                                    sell_dates.append(data.index[i + 1])
+                                    in_position = False
+                    if in_position:
+                        exit_price = data['Close'].iloc[-1]
                         profit = (exit_price - entry_price) / entry_price
                         profits.append(profit)
-                        sell_dates.append(data.index[i])
-                        in_position = False
+                else:
+                    # 기존 터치 방식
+                    buy_signal = data['Close'] < data['LowerBand']
+                    sell_signal = data['Close'] > data['UpperBand']
 
-                if in_position:
-                    exit_price = data['Close'].iloc[-1]
-                    profit = (exit_price - entry_price) / entry_price
-                    profits.append(profit)
+                    for i in range(len(data)):
+                        if not in_position and buy_signal.iloc[i]:
+                            in_position = True
+                            entry_price = data['Close'].iloc[i]
+                            buy_dates.append(data.index[i])
+                        elif in_position and sell_signal.iloc[i]:
+                            exit_price = data['Close'].iloc[i]
+                            profit = (exit_price - entry_price) / entry_price
+                            profits.append(profit)
+                            sell_dates.append(data.index[i])
+                            in_position = False
+                    if in_position:
+                        exit_price = data['Close'].iloc[-1]
+                        profit = (exit_price - entry_price) / entry_price
+                        profits.append(profit)
 
+                # 수익률 계산 및 출력
                 if profits:
                     total_return = (1 + pd.Series(profits)).prod() - 1
                     print(f"[볼린저 밴드] 총 수익률: {total_return:.2%}")
@@ -407,6 +429,7 @@ def open_backtest_popup(stock, on_search_callback=None):
                 rsi_period = config.config.get('current_rsi', 14)
                 bb_window = config.config.get('current_bollinger', 20)
                 bb_num_std = config.config.get('current_bollinger_window', 2.0)
+                use_rebound_confirmation = config.config.get("current_bollinger_use_rebound", False)
 
                 # RSI 계산
                 rsi = calculate_rsi_for_backtest(data['Close'], period=rsi_period)
@@ -430,9 +453,33 @@ def open_backtest_popup(stock, on_search_callback=None):
                 # 시그널 생성
                 macd_signal_series = pd.Series(np.where(macd > signal, "BUY", "SELL"), index=data.index)
                 ma_signal_series = pd.Series(np.where(short_ma > long_ma, "BUY", "SELL"), index=data.index)
-                bb_signal_series = pd.Series(np.where(data['Close'] < lower_band, "BUY",
-                                                      np.where(data['Close'] > upper_band, "SELL", "HOLD")),
-                                             index=data.index)
+
+                # 볼린저밴드 시그널 생성 (반등 검증 반영)
+                bb_signal_list = []
+                for i in range(len(data) - 1):
+                    if use_rebound_confirmation:
+                        if data['Close'].iloc[i] < lower_band.iloc[i]:
+                            if data['Close'].iloc[i + 1] > data['Close'].iloc[i]:  # 1일 반등 검증
+                                bb_signal_list.append("BUY")
+                            else:
+                                bb_signal_list.append("HOLD")
+                        elif data['Close'].iloc[i] > upper_band.iloc[i]:
+                            if data['Close'].iloc[i + 1] < data['Close'].iloc[i]:  # 1일 하락 검증
+                                bb_signal_list.append("SELL")
+                            else:
+                                bb_signal_list.append("HOLD")
+                        else:
+                            bb_signal_list.append("HOLD")
+                    else:
+                        if data['Close'].iloc[i] < lower_band.iloc[i]:
+                            bb_signal_list.append("BUY")
+                        elif data['Close'].iloc[i] > upper_band.iloc[i]:
+                            bb_signal_list.append("SELL")
+                        else:
+                            bb_signal_list.append("HOLD")
+                bb_signal_list.append("HOLD")  # 마지막 행 추가 (index error 방지)
+                bb_signal_series = pd.Series(bb_signal_list, index=data.index)
+
                 rsi_signal_series = pd.Series(np.where(rsi < 30, "BUY",
                                                        np.where(rsi > 70, "SELL", "HOLD")),
                                               index=data.index)
