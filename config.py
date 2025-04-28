@@ -21,7 +21,7 @@ default_config = {
             "bollinger_window": 2.0, # 표준편차 2배
         },
         "long": {
-            "period": "6mo",  # 장기 데이터 기본 설정
+            "period": "1y",  # 장기 데이터 기본 설정
             "rsi": 14,  # 장기 RSI 기간 설정
             "macd": [12, 26, 9],  # 장기 MACD 설정
             "bollinger": 20,  # 이동평균
