@@ -161,7 +161,7 @@ def fetch_stock_data(ticker):
             current_price = 0  # Default value if current price is unavailable
 
         # Calculate RSI and moving averages (MA5, MA20)
-        rsi = calculate_rsi(historical_data, config.config["current"]["rsi"])  # Assuming you have this function defined
+        rsi = calculate_rsi(historical_data, config.config["current"]["rsi"]['period'])  # Assuming you have this function defined
         ma5 = calculate_moving_average(historical_data, days=config.config["current"]["ma_cross"]["short"])
         ma20 = calculate_moving_average(historical_data, days=config.config["current"]["ma_cross"]["long"])
 

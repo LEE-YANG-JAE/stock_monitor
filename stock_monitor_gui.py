@@ -77,7 +77,7 @@ def on_radio_select():
     # 선택된 값에 맞는 데이터 요청 방식 변경
     config.config["current"]["period"] = config.config["settings"][selected_value]["period"]
     config.config["current"]["interval"] = config.config["settings"][selected_value]["interval"]
-    config.config["current"]["rsi"] = config.config["settings"][selected_value]["rsi"]
+    config.config["current"]["rsi"] = copy.deepcopy(config.config["settings"][selected_value]["rsi"])
     config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"][selected_value]["ma_cross"])
     config.config["current"]["macd"] = copy.deepcopy(config.config["settings"][selected_value]["macd"])
     config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"][selected_value]["bollinger"])
@@ -126,6 +126,7 @@ def add_ticker():
                 if name_or_ticker not in watchlist:
                     watchlist.append(name_or_ticker.strip())
                     save_watchlist()  # watchlist를 파일에 저장
+                    logging.info(f"[종목] {company_name} ({name_or_ticker}) 추가되었습니다.")
                     messagebox.showinfo("추가 완료", f"{company_name} ({name_or_ticker}) 추가되었습니다.")
                     refresh_table_once()  # 추가된 종목을 반영한 테이블 새로고침
                 else:
@@ -149,6 +150,7 @@ def remove_ticker():
                 if ticker in watchlist:
                     watchlist.remove(ticker)
                     save_watchlist()
+                    logging.info(f"[종목] {company_name_with_ticker} 삭제되었습니다.")
                     messagebox.showinfo("삭제 완료", f"{company_name_with_ticker} 삭제되었습니다.")
                     refresh_table_once()
                 else:

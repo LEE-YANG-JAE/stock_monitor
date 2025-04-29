@@ -15,7 +15,7 @@ import config
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'Malgun Gothic'
 
-strategy_options = ["macd", "rsi", "bollinger", "ma_cross", "momentum_signal", "momentum_return_ma"]
+strategy_options = ["ma_cross", "macd", "rsi", "macd_rsi", "bollinger", "momentum_signal", "momentum_return_ma"]
 
 def calculate_rsi_for_backtest(series, period=14):
     delta = series.diff()
@@ -148,6 +148,66 @@ def open_backtest_popup(stock, on_search_callback=None):
         canvas = FigureCanvasTkAgg(fig, master=graph_popup)
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         canvas.draw()
+
+    def plot_macd_rsi_backtest(data, buy_dates, sell_dates, ticker):
+        plt.figure(figsize=(14, 10))
+
+        # 전체화면 전환 코드 추가
+        mng = plt.get_current_fig_manager()
+        try:
+            mng.window.state('zoomed')  # Windows
+        except AttributeError:
+            try:
+                mng.window.showMaximized()  # Mac/Linux
+            except AttributeError:
+                pass
+
+        # === 1. Price + MA Plot ===
+        ax1 = plt.subplot(3, 1, 1)
+        ax1.set_title(f"{ticker} MACD + RSI Strategy Backtest")
+        ax1.plot(data["Close"], label="Close Price", color="black")
+        ma_s_str = config.config["current"]["ma_cross"]["short"]
+        ma_l_str = config.config["current"]["ma_cross"]["long"]
+        ax1.plot(data["Close"].rolling(window=ma_s_str).mean(), label=f'MA({ma_s_str})', linestyle="--", color="blue")
+        ax1.plot(data["Close"].rolling(window=ma_l_str).mean(), label=f'MA({ma_l_str}', linestyle="--", color="orange")
+
+        first_buy = True
+        for date in buy_dates:
+            if date in data.index:
+                ax1.axvline(x=date, color='green', linestyle='--', alpha=0.2)
+                ax1.scatter(date, data.loc[date, "Close"], marker="^", color="green",
+                            label="Buy Signal" if first_buy else "")
+                first_buy = False
+
+        first_sell = True
+        for date in sell_dates:
+            if date in data.index:
+                ax1.axvline(x=date, color='red', linestyle='--', alpha=0.2)
+                ax1.scatter(date, data.loc[date, "Close"], marker="v", color="red",
+                            label="Sell Signal" if first_sell else "")
+                first_sell = False
+
+        ax1.set_ylabel("Price")
+        ax1.legend(loc="upper left")
+
+        # === 2. RSI Plot ===
+        ax2 = plt.subplot(3, 1, 2)
+        ax2.plot(data["RSI"], label="RSI (14)", color="purple")
+        ax2.axhline(70, linestyle="--", color="red", alpha=0.5)
+        ax2.axhline(30, linestyle="--", color="green", alpha=0.5)
+        ax2.set_ylabel("RSI")
+        ax2.legend(loc="upper left")
+
+        # === 3. MACD Plot ===
+        ax3 = plt.subplot(3, 1, 3)
+        ax3.plot(data["MACD"], label="MACD", color="blue")
+        ax3.plot(data["Signal"], label="Signal Line", color="red")
+        ax3.axhline(0, linestyle="--", color="black", alpha=0.3)
+        ax3.set_ylabel("MACD")
+        ax3.legend(loc="upper left")
+
+        plt.tight_layout()
+        plt.show()
 
     def plot_bollinger(data, buy_dates, sell_dates, ticker_symbol):
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -282,19 +342,90 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 plot_macd_backtest(ticker_symbol, close_prices, macd_line, signal_line, buy_signals, sell_signals)
             case "rsi":
-                period = config.config["current"]["rsi"]
+                period = config.config["current"]["rsi"]['period']
                 rsi = calculate_rsi_for_backtest(close_prices, period)
 
                 buy_signals = []
                 sell_signals = []
 
+                lower = config.config["current"]["rsi"]['lower']
+                upper = config.config["current"]["rsi"]['upper']
                 for i in range(1, len(rsi)):
-                    if rsi.iloc[i].item() < 30:
+                    if rsi.iloc[i].item() < lower:
                         buy_signals.append(i)
-                    elif rsi.iloc[i].item() > 70:
+                    elif rsi.iloc[i].item() > upper:
                         sell_signals.append(i)
 
                 plot_rsi_backtest(ticker_symbol, close_prices, rsi, buy_signals, sell_signals)
+            case "macd_rsi":
+                # MACD 파라미터 가져오기
+                macd_conf = config.config["current"]["macd"]
+                rsi_period = config.config["current"]["rsi"]['period']
+
+                # MACD 계산
+                short_ema = data["Close"].ewm(span=macd_conf["short"], adjust=False).mean()
+                long_ema = data["Close"].ewm(span=macd_conf["long"], adjust=False).mean()
+                macd = short_ema - long_ema
+                signal = macd.ewm(span=macd_conf["signal"], adjust=False).mean()
+
+                # RSI 계산
+                delta = data["Close"].diff()
+                gain = delta.clip(lower=0).rolling(window=rsi_period).mean()
+                loss = -delta.clip(upper=0).rolling(window=rsi_period).mean()
+                rs = gain / loss
+                rsi = 100 - (100 / (1 + rs))
+
+                data["MACD"] = macd
+                data["Signal"] = signal
+                data["RSI"] = rsi
+
+                print(f"[{ticker_symbol}] 데이터 길이: {len(data)}")
+                print(f"[{ticker_symbol}] 유효한 MACD+Signal 수: {macd.dropna().shape[0]} / RSI 수: {rsi.dropna().shape[0]}")
+
+                in_position = False
+                entry_price = 0
+                buy_dates, sell_dates, profits = [], [], []
+
+                buy_cond_count = 0
+                sell_cond_count = 0
+
+                lower = config.config["current"]["rsi"]['lower']
+                upper = config.config["current"]["rsi"]['upper']
+                for i in range(1, len(data)):
+                    prev_macd, prev_signal = macd.iloc[i - 1], signal.iloc[i - 1]
+                    curr_macd, curr_signal = macd.iloc[i], signal.iloc[i]
+                    rsi_val = rsi.iloc[i]
+
+                    # 매수 조건: MACD 골든크로스 + RSI < 30
+                    if not in_position and prev_macd < prev_signal and curr_macd > curr_signal and rsi_val < lower:
+                        entry_price = data["Close"].iloc[i]
+                        buy_dates.append(data.index[i])
+                        in_position = True
+                        buy_cond_count += 1
+
+                    # 매도 조건: MACD 데드크로스 or RSI > 70
+                    elif in_position and (curr_macd < curr_signal or rsi_val > upper):
+                        exit_price = data["Close"].iloc[i]
+                        profits.append((exit_price - entry_price) / entry_price)
+                        sell_dates.append(data.index[i])
+                        in_position = False
+                        sell_cond_count += 1
+
+                    # 마지막 보유 종목 정산
+                if in_position:
+                    exit_price = data["Close"].iloc[-1]
+                    profits.append((exit_price - entry_price) / entry_price)
+
+                print(f"[{ticker_symbol}] 매수 조건 충족 횟수: {buy_cond_count}")
+                print(f"[{ticker_symbol}] 매도 조건 충족 횟수: {sell_cond_count}")
+
+                    # 결과 출력
+                if profits:
+                    total_return = (1 + pd.Series(profits)).prod() - 1
+                    print(f"[MACD+RSI] 총 수익률: {total_return:.2%}")
+                    plot_macd_rsi_backtest(data, buy_dates, sell_dates, ticker_symbol)
+                else:
+                    messagebox.showinfo("알림", f"[{ticker_symbol}] MACD+RSI 전략으로 거래 없음")
             case "bollinger":
                 window = config.config["current"]["bollinger"]["period"]
                 num_std = config.config["current"]["bollinger"]["std_dev_multiplier"]

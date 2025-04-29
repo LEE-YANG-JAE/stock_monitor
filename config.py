@@ -12,7 +12,7 @@ default_config = {
     "current": {
         "period": "30d",  # 1분봉의 최대 허용 기간
         "interval": "5m",
-        "rsi": 14,
+        "rsi": {"period": 14,"lower": 30,"upper": 70},
         "ma_cross": {"short": 5, "long": 20},
         "macd": {"short": 6, "long": 13, "signal": 5},  # 빠른 반응용
         "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": False},
@@ -22,7 +22,7 @@ default_config = {
         "short": {
             "period": "30d",  # 1분봉의 최대 허용 기간
             "interval": "5m",
-            "rsi": 14,
+            "rsi": {"period": 14,"lower": 35,"upper": 65},
             "ma_cross": {"short": 5, "long": 20},
             "macd": {"short": 6, "long": 13, "signal": 5},  # 빠른 반응용
             "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": False},
@@ -31,7 +31,7 @@ default_config = {
         "middle": {
             "period": "3mo",
             "interval": "30m",
-            "rsi": 14,
+            "rsi": {"period": 14,"lower": 30,"upper": 70},
             "ma_cross": {"short": 10, "long": 50},
             "macd": {"short": 12, "long": 26, "signal": 9},
             "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": True},
@@ -40,7 +40,7 @@ default_config = {
         "long": {
             "period": "1y",
             "interval": "1d",
-            "rsi": 14,
+            "rsi": {"period": 21,"lower": 35,"upper": 75},
             "ma_cross": {"short": 20, "long": 100},  # 추세 중심
             "macd": {"short": 12, "long": 26, "signal": 9},
             "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": True},
