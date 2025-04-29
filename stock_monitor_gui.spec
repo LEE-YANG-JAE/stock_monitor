@@ -9,7 +9,9 @@ a = Analysis(
     binaries=[],  # No binary files to include
     datas=[],  # We will add any data files below if necessary
     hiddenimports=['stock_score', 'config', 'market_trend_manager', 'holidays.countries'
-                    , 'backtest_popup'],  # Explicitly include stock_score.py as a hidden import
+                    , 'backtest_popup', 'matplotlib.backends.backend_tkagg'  # GUI 백엔드 명시
+                    , 'tkinter'  # GUI 사용 시 필요
+                    ],  # Explicitly include stock_score.py as a hidden import
     hookspath=[],
     runtime_hooks=[],
     excludes=[],

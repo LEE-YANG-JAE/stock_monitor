@@ -1,4 +1,6 @@
+import glob
 import json
+import logging
 import os
 import re
 import threading
@@ -6,6 +8,7 @@ import time
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from tkinter import simpledialog, messagebox, ttk
 
 import pytz
@@ -21,6 +24,38 @@ from stock_score import fetch_stock_data
 watchlist = []
 SAVE_FILE = "watchlist.json"
 
+# 로그 폴더 생성 (없으면)
+LOG_DIR = "logs"
+
+# 로그 파일 경로
+LOG_FILE = os.path.join(LOG_DIR, "app.log")
+MAX_BYTES = 5 * 1024 * 1024  # 5MB
+BACKUP_COUNT = 5
+RETENTION_DAYS = 30
+
+# 로그 폴더 생성
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# 1️⃣ 오래된 로그 자동 삭제 (30일 기준)
+now = time.time()
+for log_file in glob.glob(os.path.join(LOG_DIR, "*.log*")):
+    if os.path.isfile(log_file):
+        mtime = os.path.getmtime(log_file)
+        age_days = (now - mtime) / (60 * 60 * 24)
+        if age_days > RETENTION_DAYS:
+            try:
+                os.remove(log_file)
+                print(f"[로그 정리] {log_file} 삭제됨 (나이: {age_days:.1f}일)")
+            except Exception as e:
+                print(f"[오류] {log_file} 삭제 실패: {e}")
+# 2️⃣ 로깅 핸들러 설정 (순환 저장)
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
+handler = RotatingFileHandler(LOG_FILE, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8")
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 # 설정 다시 불러오기 버튼 추가 함수
 def add_reload_button(parent_frame):
@@ -40,25 +75,13 @@ def on_radio_select():
     selected_value = radio_var.get()
 
     # 선택된 값에 맞는 데이터 요청 방식 변경
-    if selected_value == "short":
-        config.config["current"]["period"] = config.config["settings"]["short"]["period"]
-        config.config["current"]["interval"] = config.config["settings"]["short"]["interval"]
-        config.config["current"]["rsi"] = config.config["settings"]["short"]["rsi"]
-        config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"]["short"]["ma_cross"])
-        config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["short"]["macd"])
-        config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"]["short"]["bollinger"])
-        config.config["current"]["momentum_return"] = copy.deepcopy(config.config["settings"]["short"]["momentum_return"])
-        print("단기 데이터가 선택되었습니다.")
-
-    elif selected_value == "long":
-        config.config["current"]["period"] = config.config["settings"]["long"]["period"]
-        config.config["current"]["interval"] = config.config["settings"]["long"]["interval"]
-        config.config["current"]["rsi"] = config.config["settings"]["long"]["rsi"]
-        config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"]["long"]["ma_cross"])
-        config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["long"]["macd"])
-        config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"]["long"]["bollinger"])
-        config.config["current"]["momentum_return"] = copy.deepcopy(config.config["settings"]["long"]["momentum_return"])
-        print("장기 데이터가 선택되었습니다.")
+    config.config["current"]["period"] = config.config["settings"][selected_value]["period"]
+    config.config["current"]["interval"] = config.config["settings"][selected_value]["interval"]
+    config.config["current"]["rsi"] = config.config["settings"][selected_value]["rsi"]
+    config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"][selected_value]["ma_cross"])
+    config.config["current"]["macd"] = copy.deepcopy(config.config["settings"][selected_value]["macd"])
+    config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"][selected_value]["bollinger"])
+    config.config["current"]["momentum_return"] = copy.deepcopy(config.config["settings"][selected_value]["momentum_return"])
 
     # 설정을 저장
     config.config["view_mode"] = selected_value  # 선택된 데이터 유형을 저장
@@ -95,7 +118,7 @@ def add_ticker():
             else:
                 messagebox.showwarning("검색 실패", f"{name_or_ticker}에 대한 정보를 찾을 수 없습니다.")
         except Exception as e:
-            print(f"add_ticker error: {e}")
+            logging.error(f"add_ticker error: {e}")
             messagebox.showwarning("검색 실패", f"{name_or_ticker} 정보를 가져오는 중 오류가 발생했습니다.")
 
 
@@ -127,7 +150,7 @@ def save_watchlist():
         with open(SAVE_FILE, "w") as f:
             json.dump(watchlist, f)  # watchlist를 JSON 파일로 저장
     except Exception as e:
-        print(f"Error saving watchlist: {e}")
+        logging.error(f"Error saving watchlist: {e}")
 
 
 # 감시 리스트 로드 함수
@@ -138,7 +161,7 @@ def load_watchlist():
             with open(SAVE_FILE, "r") as f:
                 watchlist = json.load(f)
     except Exception as e:
-        print(f"Error loading watchlist: {e}")
+        logging.error(f"Error loading watchlist: {e}")
 
 
 # 테이블 즉시 새로고침 함수
@@ -156,7 +179,7 @@ def refresh_table_once():
 
         update_table(results)  # 테이블을 갱신
     except Exception as e:
-        print(f"refresh_table_once error: {e}")
+        logging.error(f"refresh_table_once error: {e}")
 
 
 # 주식 데이터 주기적으로 갱신
@@ -166,7 +189,7 @@ def monitor_stocks():
         try:
             refresh_table_once()
         except Exception as e:
-            print(f"monitor_stocks error: {e}")
+            logging.error(f"monitor_stocks error: {e}")
 
         session = guess_market_session()
         if session != "주식장 종료":
@@ -189,7 +212,7 @@ def update_market_status():
 
     status = guess_market_session()
     # Construct the full text
-    full_text = f"{status}\n주식 수신 주기(정규장만 해당): {config.config["current"]["interval"]}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
+    full_text = f"{status}\n{config.config["current"]["period"]} - {config.config["current"]["interval"]}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
 
     # Update the market status label with color (only change market status color)
     market_status_label.config(
@@ -268,7 +291,7 @@ def update_table(data):
             table.column(col, width=width, minwidth=width)
 
     except Exception as e:
-        print(f"update_table error: {e}")
+        logging.error(f"update_table error: {e}")
 
 
 def show_splash(root):
@@ -283,12 +306,20 @@ def show_splash(root):
     splash.update()
     return splash
 
+def on_closing():
+    logging.info("🛑 프로그램 종료 중...")
+    # 기타 정리 작업 가능
+    root.destroy()
+    os._exit(0)  # 확실하게 전체 프로세스 종료 (강제 종료)
+    # 또는 sys.exit(0)도 가능하지만 os._exit이 더 강력함
 
 # 테이블 및 기타 UI 요소
 def main():
     global root, table, market_status_label, time_label, radio_var  # 전역 변수로 radio_var 사용
+    config.ensure_watchlist_file()
 
     root = tk.Tk()
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.withdraw()  # ✅ 먼저 숨긴다 (root 안보이게)
     splash = show_splash(root)  # 1. 로딩 화면 먼저 띄움
     root.title(f'미국 주식 실시간 모니터링')
@@ -315,12 +346,15 @@ def main():
     radio_frame = tk.Frame(root)
     radio_frame.pack(pady=10)
 
-    short_term_radio = tk.Radiobutton(radio_frame, text="단기 데이터", variable=radio_var, value="short",
+    short_term_radio = tk.Radiobutton(radio_frame, text="단기", variable=radio_var, value="short",
                                       command=on_radio_select)
-    long_term_radio = tk.Radiobutton(radio_frame, text="장기 데이터", variable=radio_var, value="long",
+    middle_term_radio = tk.Radiobutton(radio_frame, text="중기", variable=radio_var, value="middle",
+                                      command=on_radio_select)
+    long_term_radio = tk.Radiobutton(radio_frame, text="장기", variable=radio_var, value="long",
                                      command=on_radio_select)
 
     short_term_radio.pack(side=tk.LEFT, padx=10)
+    middle_term_radio.pack(side=tk.LEFT, padx=10)
     long_term_radio.pack(side=tk.LEFT, padx=10)
 
     # UI 초기화

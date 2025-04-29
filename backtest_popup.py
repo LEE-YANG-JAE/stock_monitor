@@ -2,6 +2,7 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import ttk, messagebox
 
+import logging
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
@@ -57,7 +58,8 @@ def open_backtest_popup(stock, on_search_callback=None):
                 config.config["backtest"]["period_unit"] = unit
                 config.save_config(config.config)
 
-        except ValueError:
+        except ValueError as e:
+            logging.error(f"update_table error: {e}")
             pass
 
     def save_and_search():

@@ -1,14 +1,17 @@
 import json
+import logging
 import os
 
 CONFIG_FILE = 'config.json'
+WATCHLIST_FILE = "watchlist.json"
+DEFAULT_WATCHLIST = ["SPY", "QQQ"]
 
 # 기본 설정 값
 default_config = {
     "view_mode": "short",  # 기본값: short (단기)
     "current": {
-        "period": "7d",
-        "interval": "1m",
+        "period": "14d",
+        "interval": "5m",
         "rsi": 14,
         "ma_cross": {
             "short": 5,
@@ -31,8 +34,8 @@ default_config = {
     },
     "settings": {
         "short": {
-            "period": "7d",  # 단기 데이터 기본 설정
-            "interval": "1m",
+            "period": "30d",
+            "interval": "10m",
             "rsi": 14,  # 단기 RSI 기간 설정
             "ma_cross": {
                 "short": 5,
@@ -52,6 +55,29 @@ default_config = {
                 "return_window": 30,
                 "threshold": 0.05
             },
+        },
+        "middle": {
+            "period": "3mo",
+            "interval": "1h",
+            "rsi": 14,
+            "ma_cross": {
+                "short": 5,
+                "long": 20
+            },
+            "macd": {
+                "short": 12,
+                "long": 26,
+                "signal": 9
+            },
+            "bollinger": {
+                "period": 20,
+                "std_dev_multiplier": 2.0,
+                "use_rebound": True
+            },
+            "momentum_return": {
+                "return_window": 30,
+                "threshold": 0.05
+            }
         },
         "long": {
             "period": "1y",  # 장기 데이터 기본 설정
@@ -80,7 +106,7 @@ default_config = {
     "backtest": {
         "period_value": 12,  # 숫자 (예: 12)
         "period_unit": "mo",  # 단위 (d=일, mo=월, y=년)
-        "method": "momentum",
+        "method": "momentum_signal",
     }
 }
 
@@ -112,7 +138,8 @@ def load_config():
             # 누락된 항목 채우기
             merged_config = merge_config(user_config, default_config)
             return merged_config
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logging.error(e)
         return default_config
 
 
@@ -122,8 +149,23 @@ def save_config(config):
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:  # UTF-8로 저장
             json.dump(config, f, indent=4)
     except Exception as e:
-        print(f"Error saving config: {e}")
+        logging.error(f"Error saving config: {e}")
 
+def ensure_watchlist_file():
+    if not os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_WATCHLIST, f, indent=2)
+        logging.info(f"✅ watchlist.json 파일 생성됨: {DEFAULT_WATCHLIST}")
+    else:
+        try:
+            with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list) or not data:
+                raise ValueError("비정상적이거나 비어 있음")
+        except Exception as e:
+            logging.error(f"⚠️ watchlist.json 오류: {e}. 기본값으로 초기화합니다.")
+            with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_WATCHLIST, f, indent=2)
 
 # config 로드
 config = load_config()
