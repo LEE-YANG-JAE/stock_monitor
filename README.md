@@ -24,8 +24,8 @@ pip install -r requirements.txt
 python stock_monitor_gui.py
 ```
 
- - 처음 실행 시 `config.json` 파일과 log 폴더와 `app.log` 자동 생성됩니다. 
--  종목 추가시 `watchlist.json` 가 생성됩니다.
+ - 처음 실행 시 `config.json`, `watchlist.json` 파일과 log 폴더와 `app.log` 자동 생성됩니다. 
+-  종목 추가시 `watchlist.json` 에 티커가 추가됩니다.
 
 ### 실행 파일 생성 (선택사항)
 
