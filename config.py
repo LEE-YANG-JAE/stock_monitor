@@ -10,9 +10,9 @@ DEFAULT_WATCHLIST = ["SPY", "QQQ"]
 default_config = {
     "view_mode": "short",  # 기본값: short (단기)
     "current": {
-        "period": "7d",  # 1분봉의 최대 허용 기간
-        "interval": "1m",
-        "rsi": 9,  # 민감도 높은 단기 RSI
+        "period": "30d",  # 1분봉의 최대 허용 기간
+        "interval": "5m",
+        "rsi": 14,
         "ma_cross": {"short": 5, "long": 20},
         "macd": {"short": 6, "long": 13, "signal": 5},  # 빠른 반응용
         "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": False},
