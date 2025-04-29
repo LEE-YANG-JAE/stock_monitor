@@ -100,7 +100,7 @@ def calculate_bollinger_bands(historical_data):
 
 
 def auto_set_interval_by_period():
-    period = config["current"].get("period", "1y")  # 혹시 누락되었을 경우 기본 "1y"
+    period = config.config["current"].get("period", "1y")  # 혹시 누락되었을 경우 기본 "1y"
     try:
         if isinstance(period, str):
             if period.endswith("d"):
@@ -125,10 +125,10 @@ def auto_set_interval_by_period():
             raise ValueError("Period must be a string")
     except Exception as e:
         print(f"⚠️ Invalid period '{period}' detected: {e}. Reverting to default '1y' + '1d'")
-        config["current"]["period"] = "1y"
+        config.config["current"]["period"] = "1y"
         interval = "1d"
 
-    config["current"]["interval"] = interval
+    config.config["current"]["interval"] = interval
     config.save_config(config.config)
 
 # 종목 데이터 가져오기
