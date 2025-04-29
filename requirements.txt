@@ -1,0 +1,7 @@
+yfinance
+pandas
+matplotlib
+tk
+numpy
+pytz
+holidays

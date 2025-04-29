@@ -1,140 +1,198 @@
-# 주식 모니터링 애플리케이션
+# 📊 미국 주식 실시간 모니터링 & 전략 백테스트 툴
 
-다중 주식 종목을 실시간으로 모니터링하는 애플리케이션입니다. 미국 주식 시장의 종목을 대상으로 1분 간격으로 데이터를 갱신하여 주가, 추세 신호, RSI 정보 등을 확인할 수 있습니다.
+본 프로젝트는 `Tkinter` 기반 GUI와 `yfinance`, `matplotlib`, `pandas` 등을 활용하여  
+**미국 주식 실시간 감시**, **다양한 전략 기반 백테스트**, **설정 저장/복원 기능** 등을 지원하는 Python 어플리케이션입니다.
 
-## 주요 기능
+---
 
-- 여러 주식 종목 동시 모니터링
-- 1분 간격 실시간 데이터 갱신
-- 종목별 현재가, 추세 신호(MA5, MA20 기준), RSI 지표 표시
-- 수익률(%) 표시
-- 종목 추가/삭제 기능
-- 감시 목록 저장 및 불러오기
-- **MACD**와 **Bollinger Bands** 그래프 표시
-- 주식 시장 상태 (열림/종료) 표시
+## 📁 폴더 구성 및 주요 파일
 
-## 파일 구성
+| 파일명 | 설명 |
+|--------|------|
+| `stock_monitor_gui.py` | 메인 GUI 실행 (실시간 종목 모니터링 + 전략 선택 팝업) |
+| `backtest_popup.py` | 전략 선택 및 시각화 백테스트 실행 |
+| `market_trend_manager.py` | 시장 추세 판단 및 세션 구분 (정규장, 프리장 등) |
+| `stock_score.py` | 각 종목에 대한 기술적 분석 점수 계산 |
+| `config.py` | `config.json` 파일 불러오기 및 병합 처리 |
 
-### `stock_monitor_gui.py`
+---
 
-주식 모니터링 애플리케이션의 GUI를 담당하는 파일입니다. Tkinter를 사용하여 사용자 인터페이스를 제공합니다. 주요 기능은 다음과 같습니다:
+## 🚀 실행 방법
 
-- **종목 추가 및 삭제**: 사용자 입력을 받아 주식 티커를 추가하거나 삭제할 수 있습니다.
-
-- **주식 데이터 실시간 모니터링**: 1분 간격으로 주식 데이터를 갱신하고, 현재가, 추세 신호, RSI 등을 표시합니다.
-
-- **데이터 테이블**: 종목별로 데이터를 테이블 형식으로 보여주며, 각 종목에 대해 **매수**, **매도**, **보유** 신호를 표시합니다.
-
-- **주식 그래프 표시**: 종목을 더블 클릭하면 해당 종목에 대한 **MACD**와 **Bollinger Bands** 그래프를 표시합니다.
-
-- **주식 시장 상태 표시**: 주식 시장이 열려 있는지 종료되었는지, 한국 시간과 미국 시간도 함께 표시합니다.
-
-### `stock_score.py`
-
-주식 데이터 분석 모듈로, **RSI**, **MACD**, **이동평균(MA5, MA20)**, **Bollinger Bands** 등의 기술적 지표를 계산합니다. 이 모듈의 주요 기능은:
-
-- `fetch_stock_data()`: 주식 티커를 입력받아 주식 데이터를 가져오고, 각 기술적 지표를 계산합니다. 또한 **매수**, **매도**, **보유** 신호를 생성합니다.
-
-- `calculate_rsi()`: 주식의 **RSI**를 계산합니다.
-
-- `calculate_moving_average()`: 주식의 **이동평균(MA5, MA20**)을 계산합니다.
-
-- `calculate_macd()`: 주식의 **MACD** 지표를 계산합니다.
-
-- `calculate_bollinger_bands()`: 주식의 **Bollinger Bands**를 계산합니다.
-
-- **모멘텀 신호**: 여러 지표의 신호가 일치하면 **BUY**, **SELL**, **HOLD** 신호를 생성합니다.
-
-## 설치 방법
-
-### 1. 필요한 패키지 설치
-
-```
-bash
+```bash
+pip install -r requirements.txt
+python stock_monitor_gui.py
 ```
 
-복사편집
+> 처음 실행 시 `config.json`, `watchlist.json` 파일이 자동 생성됩니다.
 
-`pip install tkinter yfinance pytz matplotlib`
+### 실행 파일 생성 (선택사항)
 
-### 2. 애플리케이션 실행
+```bash
+pyinstaller stock_monitor_gui.spec`
+````
+---
+## ⚙ 주요 기능
 
+### ✅ 실시간 종목 모니터링
+- 현재가, 추세(MA), RSI, MACD, Bollinger Band, 모멘텀 종합 신호 표시
+- 1분 간격으로 자동 업데이트
+- 프리장, 정규장, 애프터장 구분
+
+### ✅ 전략 백테스트 지원
+- 팝업에서 종목 선택 후 전략 선택 가능
+- 전략별로 `matplotlib`을 통한 시각화 제공
+
+---
+
+## 🧠 지원 전략 목록
+
+| 전략 이름 | 설명 |
+|-----------|------|
+| `macd` | MACD 교차 전략 |
+| `rsi` | RSI 과매수/과매도 전략 |
+| `bollinger` | 볼린저 밴드 돌파 / 반등 전략 |
+| `ma_cross` | 단기/장기 이동평균선 교차 전략 |
+| `momentum_signal` | 지표 기반 모멘텀 (MACD + MA + RSI + BB) |
+| `momentum_return_ma` | 수익률 기반 모멘텀 + MA 크로스 필터 |
+
+---
+
+## 🧾 설정 예시 및 방법 (`config.json`)
+
+```json
+{
+  "view_mode": "long",
+  "current": {
+    "period": "1y",
+    "interval": "1m",
+    "rsi": 14,
+    "ma_cross": {
+      "short": 5,
+      "long": 20
+    },
+    "macd": {
+      "short": 12,
+      "long": 26,
+      "signal": 9
+    },
+    "bollinger": {
+      "period": 20,
+      "std_dev_multiplier": 2.0,
+      "use_rebound": false
+    },
+    "momentum_return": {
+      "return_window": 30,
+      "threshold": 0.05
+    }
+  },
+  "settings": {
+    "short": {
+      "period": "14d",
+      "rsi": 14,
+      "ma_cross": {
+        "short": 5,
+        "long": 20
+      },
+      "macd": {
+        "short": 12,
+        "long": 26,
+        "signal": 9
+      },
+      "bollinger": {
+        "period": 20,
+        "std_dev_multiplier": 2.0,
+        "use_rebound": false
+      },
+      "momentum_return": {
+        "return_window": 30,
+        "threshold": 0.05
+      }
+    },
+    "long": {
+      "period": "1y",
+      "rsi": 14,
+      "ma_cross": {
+        "short": 5,
+        "long": 20
+      },
+      "macd": {
+        "short": 12,
+        "long": 26,
+        "signal": 9
+      },
+      "bollinger": {
+        "period": 20,
+        "std_dev_multiplier": 2.0,
+        "use_rebound": true
+      },
+      "momentum_return": {
+        "return_window": 30,
+        "threshold": 0.05
+      }
+    }
+  },
+  "backtest": {
+    "period_value": 6,
+    "period_unit": "mo",
+    "method": "macd"
+  }
+}
 ```
-bash
+### 🔍 설명
+- `current`: 현재 분석/백테스트에 사용되는 설정값들
+- `settings.short / long`: 단기/장기 전략을 빠르게 전환할 수 있는 사전 설정
+- `backtest`: 팝업에서 사용할 기본 백테스트 조건
+
+- **`period` / `interval`**: 데이터 조회 구간
+- **`ma_cross`**: 단기/장기 MA 설정
+- **`momentum_return`**: 수익률 기준 기간과 임계값
+- **`backtest.method`**: 팝업에서 기본 선택될 전략
+
+---
+
+## 🖼 전략 백테스트 결과 예시
+
+> ✅ BUY/SELL 시점이 차트에 마킹되고, 전략별 누적 수익률을 출력합니다.
+
+- `MACD`: 이중 지표 그래프
+- `RSI`: 30/70 선과 함께 매수/매도 표시
+- `MA 교차`: MA(5) / MA(20)과 교차점 표시
+- `모멘텀`: MACD, RSI, BB, MA 전부 시각화
+
+---
+
+## 💬 기타 기능
+
+- 단기/장기 설정 스위치 (라디오 버튼으로 전체 파라미터 전환)
+- 설정값 `config.json`에 자동 저장/불러오기
+- 감시 종목 `watchlist.json` 파일로 유지
+
+---
+
+## 🛠 Requirements
+
+```text
+yfinance
+pandas
+matplotlib
+tkinter
+numpy
+pytz
+holidays
 ```
 
-복사편집
+---
 
-`python stock_monitor_gui.py`
+## 🧑‍💻 만든 목적
 
-### 3. 실행 파일 생성 (선택사항)
+- 실전에서 사용할 수 있는 전략 검증 툴킷
+- 초보자도 시각적으로 쉽게 접근 가능
+- 전략 실험과 빠른 튜닝을 GUI 기반으로 수행 가능
 
-```
-bash
-```
+---
 
-복사편집
+## 🔗 참고
 
-`pip install pyinstaller pyinstaller stock_monitor_gui.spec`
-
-## 사용 방법
-
-1. **종목 추가**: "종목 추가" 버튼을 클릭하고 추가할 종목의 티커를 입력합니다 (예: NVDA, TSLA).
-
-2. **종목 삭제**: 테이블에서 삭제할 종목을 선택한 후 "종목 삭제" 버튼을 클릭합니다.
-
-3. **데이터 모니터링**: 테이블에 표시된 정보를 통해 종목의 현재가, 추세 신호, RSI 등을 확인할 수 있습니다.
-
-4. **그래프 보기**: 종목을 더블 클릭하면 해당 종목의 **MACD**와 **Bollinger Bands** 그래프를 확인할 수 있습니다.
-
-## 표시 정보 설명
-
-- **종목명**: 회사명과 티커 (예: Tesla (TSLA))
-
-- **현재가**: 실시간 주가 ($)
-
-- **추세 신호**:
-
-  - **BUY**: 5일 이동평균(MA5)이 20일 이동평균(MA20)보다 높을 때
-
-  - **SELL**: 5일 이동평균(MA5)이 20일 이동평균(MA20)보다 낮을 때
-
-  - **HOLD**: 5일 이동평균과 20일 이동평균이 동일할 때
-
-- **RSI 신호**:
-
-  - **과매수**: RSI &gt; 70%
-
-  - **과매도**: RSI &lt; 30%
-
-  - **중립**: 30% ≤ RSI ≤ 70%
-
-- **수익률**: 당일 주가 변동률(%)
-
-- **MACD**: **MACD**와 **Signal Line**의 교차 상태를 표시
-
-- **Bollinger Bands**: **Bollinger Bands**의 상단과 하단 밴드를 기준으로 과매도/과매수 상태를 판단
-
-## 주식 시장 상태
-
-- **주식장 중**: 주식 시장이 열려 있을 때 주식 데이터를 갱신합니다.
-
-- **주식장 종료**: 주식 시장이 종료된 후에는 데이터를 갱신하지 않습니다.
-
-## 개발 정보
-
-- **개발 언어**: Python
-
-- **GUI 프레임워크**: Tkinter
-
-- **데이터 소스**: Yahoo Finance API (yfinance)
-
-- **시계열 분석**: 이동평균(MA), 상대강도지수(RSI), MACD, Bollinger Bands
-
-## 주의사항
-
-- 주식 시장이 열리지 않은 시간(주말, 공휴일, 장 외 시간)에는 최신 데이터를 가져오지 못할 수 있습니다.
-
-- 데이터는 1분 간격으로 갱신되며, 네트워크 상태에 따라 지연될 수 있습니다.
-
-- Yahoo Finance API의 데이터 제한 정책에 따라 과도한 요청 시 일시적으로 차단될 수 있습니다.
+- 데이터 제공: [Yahoo Finance](https://finance.yahoo.com)
+---
