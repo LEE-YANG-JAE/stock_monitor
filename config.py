@@ -40,7 +40,7 @@ default_config = {
         "long": {
             "period": "1y",
             "interval": "1d",
-            "rsi": {"period": 21,"lower": 35,"upper": 75},
+            "rsi": {"period": 21,"lower": 25,"upper": 75},
             "ma_cross": {"short": 20, "long": 100},  # 추세 중심
             "macd": {"short": 12, "long": 26, "signal": 9},
             "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": True},
