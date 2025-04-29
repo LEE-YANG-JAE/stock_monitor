@@ -563,6 +563,49 @@ def open_backtest_popup(stock, on_search_callback=None):
                 # 그래프 출력
                 plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates,
                                               rsi, macd, signal, ticker_symbol)
+            case "momentum_return_ma":
+                short_window = config.config['current']['ma_cross']['short']
+                long_window = config.config['current']['ma_cross']['long']
+                return_window = config.config['current']['momentum_return']['return_window']
+                return_threshold = config.config['current']['momentum_return']['threshold']  # 5% 수익률
+
+                data['Short_MA'] = data['Close'].rolling(window=short_window).mean()
+                data['Long_MA'] = data['Close'].rolling(window=long_window).mean()
+                data['Return'] = data['Close'] / data['Close'].shift(return_window) - 1
+
+                buy_dates = []
+                sell_dates = []
+                in_position = False
+                entry_price = 0
+                profits = []
+
+                for i in range(return_window, len(data)):
+                    ret = data['Return'].iloc[i]
+                    short_ma = data['Short_MA'].iloc[i]
+                    long_ma = data['Long_MA'].iloc[i]
+
+                    if not in_position and ret >= return_threshold and short_ma > long_ma:
+                        in_position = True
+                        entry_price = data['Close'].iloc[i]
+                        buy_dates.append(data.index[i])
+                    elif in_position and (short_ma < long_ma or ret < 0):
+                        exit_price = data['Close'].iloc[i]
+                        profit = (exit_price - entry_price) / entry_price
+                        profits.append(profit)
+                        sell_dates.append(data.index[i])
+                        in_position = False
+
+                if in_position:
+                    exit_price = data['Close'].iloc[-1]
+                    profit = (exit_price - entry_price) / entry_price
+                    profits.append(profit)
+
+                if profits:
+                    total_return = (1 + pd.Series(profits)).prod() - 1
+                    print(f"[모멘텀 수익률 + MA 교차] 총 수익률: {total_return:.2%}")
+                    plot_ma_cross(data, buy_dates, sell_dates, ticker_symbol)
+                else:
+                    messagebox.showerror("데이터 없음", f"[모멘텀 수익률 + MA 교차] 거래 없음")
             case _:
                 messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
 
@@ -597,7 +640,7 @@ def open_backtest_popup(stock, on_search_callback=None):
 
     tk.Label(frame, text="전략 선택:").grid(row=1, column=0, padx=5)
     method_var = tk.StringVar()
-    method_menu = ttk.Combobox(frame, textvariable=method_var, values=strategy_options, width=10, state="readonly")
+    method_menu = ttk.Combobox(frame, textvariable=method_var, values=strategy_options, width=20, state="readonly")
     method_menu.grid(row=1, column=1, columnspan=3, padx=5, pady=5, sticky="w")
     method_var.set(config.config["backtest"].get("method", "macd"))
 
