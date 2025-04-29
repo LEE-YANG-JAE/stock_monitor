@@ -43,15 +43,19 @@ def on_radio_select():
     if selected_value == "short":
         config.config["current"]["period"] = config.config["settings"]["short"]["period"]
         config.config["current"]["rsi"] = config.config["settings"]["short"]["rsi"]
+        config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"]["short"]["ma_cross"])
         config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["short"]["macd"])
         config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"]["short"]["bollinger"])
+        config.config["current"]["momentum_return"] = copy.deepcopy(config.config["settings"]["short"]["momentum_return"])
         print("단기 데이터가 선택되었습니다.")
 
     elif selected_value == "long":
         config.config["current"]["period"] = config.config["settings"]["long"]["period"]
         config.config["current"]["rsi"] = config.config["settings"]["long"]["rsi"]
+        config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"]["long"]["ma_cross"])
         config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["long"]["macd"])
         config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"]["long"]["bollinger"])
+        config.config["current"]["momentum_return"] = copy.deepcopy(config.config["settings"]["long"]["momentum_return"])
         print("장기 데이터가 선택되었습니다.")
 
     # 설정을 저장

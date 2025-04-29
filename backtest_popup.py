@@ -14,7 +14,7 @@ import config
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'Malgun Gothic'
 
-strategy_options = ["macd", "rsi", "bollinger", "ma_cross", "momentum",]
+strategy_options = ["macd", "rsi", "bollinger", "ma_cross", "momentum_signal", "momentum_return_ma"]
 
 def calculate_rsi_for_backtest(series, period=14):
     delta = series.diff()
@@ -163,9 +163,11 @@ def open_backtest_popup(stock, on_search_callback=None):
 
     def plot_ma_cross(data, buy_dates, sell_dates, ticker_symbol):
         fig, ax = plt.subplots(figsize=(12, 6))
+        ma_s_str = config.config["current"]["ma_cross"]["short"]
+        ma_l_str = config.config["current"]["ma_cross"]["long"]
         ax.plot(data.index, data['Close'], label='Close Price', color='black')
-        ax.plot(data.index, data['Short_MA'], label='Short MA (5)', linestyle='--')
-        ax.plot(data.index, data['Long_MA'], label='Long MA (20)', linestyle='--')
+        ax.plot(data.index, data['Short_MA'], label=f'Short MA ({ma_s_str})', linestyle='--')
+        ax.plot(data.index, data['Long_MA'], label=f'Long MA ({ma_l_str})', linestyle='--')
         ax.scatter(buy_dates, data.loc[buy_dates]['Close'], marker='^', color='green', label='Buy Signal', s=100)
         ax.scatter(sell_dates, data.loc[sell_dates]['Close'], marker='v', color='red', label='Sell Signal', s=100)
         ax.set_title(f"{ticker_symbol} Moving Average Cross Backtest")
@@ -377,9 +379,9 @@ def open_backtest_popup(stock, on_search_callback=None):
                     print("[볼린저 밴드] 거래 없음")
                     messagebox.showerror("데이터 없음", f"[볼린저 밴드]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
             case "ma_cross":
-                # 단기 이동평균선(5일)과 장기 이동평균선(20일)을 계산
-                short_window = 5
-                long_window = 20
+                # 단기 이동평균선과 장기 이동평균선을 계산
+                short_window = config.config["current"]["ma_cross"]["short"]
+                long_window = config.config["current"]["ma_cross"]["long"]
 
                 short_ma = data['Close'].rolling(window=short_window).mean()
                 long_ma = data['Close'].rolling(window=long_window).mean()
@@ -429,7 +431,7 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 else:
                     messagebox.showerror("데이터 없음", f"[이동평균 교차]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
-            case 'momentum':
+            case 'momentum_signal':
                 # 사용자 config 값 가져오기
                 macd_short_span = config.config['current']['macd']['short']
                 macd_long_span = config.config['current']['macd']['long']

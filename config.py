@@ -10,6 +10,10 @@ default_config = {
         "period": "14d",
         "interval": "1m",
         "rsi": 14,
+        "ma_cross": {
+            "short": 5,
+            "long": 20
+        },
         "macd": {
             "short": 12,
             "long": 26,
@@ -19,12 +23,20 @@ default_config = {
             "period": 20,
             "std_dev_multiplier": 2.0,
             "use_rebound": True
-        }
+        },
+        "momentum_return": {
+            "return_window": 30,
+            "threshold": 0.05
+        },
     },
     "settings": {
         "short": {
             "period": "14d",  # 단기 데이터 기본 설정
             "rsi": 14,  # 단기 RSI 기간 설정
+            "ma_cross": {
+                "short": 5,
+                "long": 20
+            },
             "macd": {
                 "short": 12,
                 "long": 26,
@@ -34,11 +46,19 @@ default_config = {
                 "period": 20,
                 "std_dev_multiplier": 2.0,
                 "use_rebound": False
-            }
+            },
+            "momentum_return": {
+                "return_window": 30,
+                "threshold": 0.05
+            },
         },
         "long": {
             "period": "1y",  # 장기 데이터 기본 설정
             "rsi": 14,  # 장기 RSI 기간 설정
+            "ma_cross": {
+                "short": 5,
+                "long": 20
+            },
             "macd": {
                 "short": 12,
                 "long": 26,
@@ -47,8 +67,12 @@ default_config = {
             "bollinger": {
                 "period": 20,
                 "std_dev_multiplier": 2.0,
-                "use_rebound": False
-            }
+                "use_rebound": True
+            },
+            "momentum_return": {
+                "return_window": 30,
+                "threshold": 0.05
+            },
         }
     },
     "backtest": {

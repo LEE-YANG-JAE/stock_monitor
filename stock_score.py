@@ -127,8 +127,8 @@ def fetch_stock_data(ticker):
 
         # Calculate RSI and moving averages (MA5, MA20)
         rsi = calculate_rsi(historical_data, config.config["current"]["rsi"])  # Assuming you have this function defined
-        ma5 = calculate_moving_average(historical_data, days=5)
-        ma20 = calculate_moving_average(historical_data, days=20)
+        ma5 = calculate_moving_average(historical_data, days=config.config["current"]["ma_cross"]["short"])
+        ma20 = calculate_moving_average(historical_data, days=config.config["current"]["ma_cross"]["long"])
 
         # Calculate MACD and Bollinger Bands
         macd_period = config.config["current"]["macd"]
@@ -153,15 +153,17 @@ def fetch_stock_data(ticker):
         elif rate < 0:
             rate_color = "red"  # Red if price is decreasing
 
+        ma_s_str = config.config["current"]["ma_cross"]["short"]
+        ma_l_str = config.config["current"]["ma_cross"]["long"]
         # Trend Signal based on the comparison of moving averages (MA5 vs MA20)
         if ma5 > ma20:
-            trend_signal = f"BUY (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
+            trend_signal = f"BUY (MA{ma_s_str}: {ma5:.2f}, MA{ma_l_str}: {ma20:.2f})"
             trend_simple_signal = 'BUY'
         elif ma5 < ma20:
-            trend_signal = f"SELL (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
+            trend_signal = f"SELL (MA{ma_s_str}: {ma5:.2f}, MA{ma_l_str}: {ma20:.2f})"
             trend_simple_signal = 'SELL'
         else:
-            trend_signal = f"HOLD (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
+            trend_signal = f"HOLD (MA{ma_s_str}: {ma5:.2f}, MA{ma_l_str}: {ma20:.2f})"
             trend_simple_signal = 'HOLD'
 
         use_rebound_confirmation = config.config["current"]["bollinger"]["use_rebound"]
