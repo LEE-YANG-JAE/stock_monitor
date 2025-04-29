@@ -10,12 +10,11 @@ import yfinance as yf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 import config
-from stock_score import calculate_bollinger_bands
 
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'Malgun Gothic'
 
-strategy_options = ["macd", "rsi", "bollinger", "ma_cross", "momentum"]
+strategy_options = ["macd", "rsi", "bollinger", "ma_cross", "momentum",]
 
 def calculate_rsi_for_backtest(series, period=14):
     delta = series.diff()
@@ -261,10 +260,10 @@ def open_backtest_popup(stock, on_search_callback=None):
 
         match method:
             case "macd":
-                macd_short = close_prices.ewm(span=config.config["current_macd"][0], adjust=False).mean()
-                macd_long = close_prices.ewm(span=config.config["current_macd"][1], adjust=False).mean()
+                macd_short = close_prices.ewm(span=config.config["current"]["macd"]["short"], adjust=False).mean()
+                macd_long = close_prices.ewm(span=config.config["current"]["macd"]["long"], adjust=False).mean()
                 macd_line = macd_short - macd_long
-                signal_line = macd_line.ewm(span=config.config["current_macd"][2], adjust=False).mean()
+                signal_line = macd_line.ewm(span=config.config["current"]["macd"]["signal"], adjust=False).mean()
 
                 buy_signals = []
                 sell_signals = []
@@ -282,7 +281,7 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 plot_macd_backtest(ticker_symbol, close_prices, macd_line, signal_line, buy_signals, sell_signals)
             case "rsi":
-                period = config.config.get("current_rsi", 14)
+                period = config.config["current"]["rsi"]
                 rsi = calculate_rsi_for_backtest(close_prices, period)
 
                 buy_signals = []
@@ -296,8 +295,8 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 plot_rsi_backtest(ticker_symbol, close_prices, rsi, buy_signals, sell_signals)
             case "bollinger":
-                window = config.config.get("current_bollinger", 20)
-                num_std = config.config.get("current_bollinger_window", 2.0)
+                window = config.config["current"]["bollinger"]["period"]
+                num_std = config.config["current"]["bollinger"]["std_dev_multiplier"]
 
                 ma = close_prices.rolling(window=window).mean()
                 std = close_prices.rolling(window=window).std()
@@ -319,7 +318,7 @@ def open_backtest_popup(stock, on_search_callback=None):
                 else:
                     print(f"[경고] {expected_cols} 컬럼이 존재하지 않습니다. 현재 컬럼들: {data.columns.tolist()}")
 
-                use_rebound_confirmation = config.config.get("current_bollinger_use_rebound", False)
+                use_rebound_confirmation = config.config["current"]["bollinger"]["use_rebound"]
                 buy_dates = []
                 sell_dates = []
                 in_position = False
@@ -432,20 +431,20 @@ def open_backtest_popup(stock, on_search_callback=None):
                     messagebox.showerror("데이터 없음", f"[이동평균 교차]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
             case 'momentum':
                 # 사용자 config 값 가져오기
-                macd_short_span = config.config['current_macd'][0]
-                macd_long_span = config.config['current_macd'][1]
-                macd_signal_span = config.config['current_macd'][2]
-                rsi_period = config.config.get('current_rsi', 14)
-                bb_window = config.config.get('current_bollinger', 20)
-                bb_num_std = config.config.get('current_bollinger_window', 2.0)
-                use_rebound_confirmation = config.config.get("current_bollinger_use_rebound", False)
+                macd_short_span = config.config['current']['macd']['short']
+                macd_long_span = config.config['current']['macd']['long']
+                macd_signal_span = config.config['current']['macd']['signal']
+                rsi_period = config.config['current']['rsi']
+                bb_period = config.config['current']['bollinger']['period']
+                bb_num_std = config.config['current']['bollinger']['std_dev_multiplier']
+                use_rebound_confirmation = config.config['current']['bollinger']['use_rebound']
 
                 # RSI 계산
                 rsi = calculate_rsi_for_backtest(data['Close'], period=rsi_period)
 
                 # 볼린저 밴드 계산
-                rolling_mean = data['Close'].rolling(window=bb_window).mean()
-                rolling_std = data['Close'].rolling(window=bb_window).std()
+                rolling_mean = data['Close'].rolling(window=bb_period).mean()
+                rolling_std = data['Close'].rolling(window=bb_period).std()
                 upper_band = rolling_mean + (rolling_std * bb_num_std)
                 lower_band = rolling_mean - (rolling_std * bb_num_std)
 

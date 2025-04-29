@@ -15,9 +15,9 @@ BB_confidence = 0.75  # 75% 확률로 유효한 매수 신호
 
 
 def update_period_interval(period, interval):
-    config.config["current_period"] = period
-    config.config["current_interval"] = interval
-    print(f"현재 설정: period={config.config['current_period']}, interval={config.config['current_interval']}")
+    config.config["current"]["period"] = period
+    config.config["current"]["interval"] = interval
+    print(f"현재 설정: period={config.config['current']['period']}, interval={config.config['current']['interval']}")
     config.save_config(config.config)
 
 
@@ -88,13 +88,13 @@ def calculate_macd(historical_data, period=(12, 26, 9)):
 
 
 # Bollinger Bands 계산 함수
-def calculate_bollinger_bands(historical_data, window=20):
+def calculate_bollinger_bands(historical_data):
     # 20일 이동평균 및 표준편차
-    rolling_mean = historical_data['Close'].rolling(window=window).mean()
-    rolling_std = historical_data['Close'].rolling(window=window).std()
+    rolling_mean = historical_data['Close'].rolling(window=config.config["current"]["bollinger"]["period"]).mean()
+    rolling_std = historical_data['Close'].rolling(window=config.config["current"]["bollinger"]["period"]).std()
 
-    upper_band = rolling_mean + (rolling_std * config.config.get("current_bollinger_window", 2.0))  # Upper Band
-    lower_band = rolling_mean - (rolling_std * config.config.get("current_bollinger_window", 2.0))  # Lower Band
+    upper_band = rolling_mean + (rolling_std * config.config["current"]["bollinger"]["std_dev_multiplier"]) # Upper Band
+    lower_band = rolling_mean - (rolling_std * config.config["current"]["bollinger"]["std_dev_multiplier"]) # Lower Band
 
     return upper_band, lower_band, rolling_mean
 
@@ -104,10 +104,10 @@ def fetch_stock_data(ticker):
         ticker_data = yf.Ticker(ticker)
         # 장중일 때와 비장중일 때 데이터 요청 방식 처리
         if is_market_open():
-            historical_data = ticker_data.history(period=config.config["current_period"],
-                                                  interval=config.config["current_interval"])
+            historical_data = ticker_data.history(period=config.config["current"]["period"],
+                                                  interval=config.config["current"]["interval"])
         else:
-            historical_data = ticker_data.history(period=config.config["current_period"])
+            historical_data = ticker_data.history(period=config.config["current"]["period"])
 
         # Fetch company name and current price
         company_name = ticker_data.info.get('shortName', 'Unknown Company')
@@ -126,15 +126,14 @@ def fetch_stock_data(ticker):
             current_price = 0  # Default value if current price is unavailable
 
         # Calculate RSI and moving averages (MA5, MA20)
-        rsi = calculate_rsi(historical_data, config.config["current_rsi"])  # Assuming you have this function defined
+        rsi = calculate_rsi(historical_data, config.config["current"]["rsi"])  # Assuming you have this function defined
         ma5 = calculate_moving_average(historical_data, days=5)
         ma20 = calculate_moving_average(historical_data, days=20)
 
         # Calculate MACD and Bollinger Bands
-        macd, signal_line, macd_histogram = calculate_macd(historical_data, config.config["current_macd"])
-        upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data,
-                                                                        config.config["current_bollinger"])
-
+        macd_period = config.config["current"]["macd"]
+        macd, signal_line, macd_histogram = calculate_macd(historical_data, (macd_period["short"], macd_period["long"], macd_period["signal"]))
+        upper_band, lower_band, middle_band = calculate_bollinger_bands(historical_data)
         # Calculate MACD Signal: BUY, SELL, or HOLD based on MACD crossover
         macd_simple_signal = 'HOLD'
         if macd.iloc[-1] > signal_line.iloc[-1]:  # MACD crosses above Signal Line (BUY)
@@ -165,7 +164,7 @@ def fetch_stock_data(ticker):
             trend_signal = f"HOLD (MA5: {ma5:.2f}, MA20: {ma20:.2f})"
             trend_simple_signal = 'HOLD'
 
-        use_rebound_confirmation = config.config.get("current_bollinger_use_rebound", False)
+        use_rebound_confirmation = config.config["current"]["bollinger"]["use_rebound"]
 
         bb_signal = "HOLD"
         if use_rebound_confirmation:

@@ -10,6 +10,7 @@ from tkinter import simpledialog, messagebox, ttk
 
 import pytz
 import yfinance as yf
+import copy
 
 import config
 from backtest_popup import open_backtest_popup
@@ -40,20 +41,17 @@ def on_radio_select():
 
     # 선택된 값에 맞는 데이터 요청 방식 변경
     if selected_value == "short":
-        config.config["current_period"] = config.config["settings"]["short"]["period"]
-        config.config["current_rsi"] = config.config["settings"]["short"]["rsi"]
-        config.config["current_macd"] = config.config["settings"]["short"]["macd"]
-        config.config["current_bollinger"] = config.config["settings"]["short"]["bollinger"]
-        config.config["current_bollinger_window"] = config.config["settings"]["short"]["bollinger_window"]
-        config.config["current_bollinger_use_rebound"] = config.config["settings"]["short"]["bollinger_use_rebound"]
+        config.config["current"]["period"] = config.config["settings"]["short"]["period"]
+        config.config["current"]["rsi"] = config.config["settings"]["short"]["rsi"]
+        config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["short"]["macd"])
+        config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"]["short"]["bollinger"])
         print("단기 데이터가 선택되었습니다.")
+
     elif selected_value == "long":
-        config.config["current_period"] = config.config["settings"]["long"]["period"]
-        config.config["current_rsi"] = config.config["settings"]["long"]["rsi"]
-        config.config["current_macd"] = config.config["settings"]["long"]["macd"]
-        config.config["current_bollinger"] = config.config["settings"]["long"]["bollinger"]
-        config.config["current_bollinger_window"] = config.config["settings"]["long"]["bollinger_window"]
-        config.config["current_bollinger_use_rebound"] = config.config["settings"]["long"]["bollinger_use_rebound"]
+        config.config["current"]["period"] = config.config["settings"]["long"]["period"]
+        config.config["current"]["rsi"] = config.config["settings"]["long"]["rsi"]
+        config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["long"]["macd"])
+        config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"]["long"]["bollinger"])
         print("장기 데이터가 선택되었습니다.")
 
     # 설정을 저장
