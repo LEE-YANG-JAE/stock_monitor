@@ -10,97 +10,41 @@ DEFAULT_WATCHLIST = ["SPY", "QQQ"]
 default_config = {
     "view_mode": "short",  # 기본값: short (단기)
     "current": {
-        "period": "14d",
-        "interval": "5m",
-        "rsi": 14,
-        "ma_cross": {
-            "short": 5,
-            "long": 20
-        },
-        "macd": {
-            "short": 12,
-            "long": 26,
-            "signal": 9
-        },
-        "bollinger": {
-            "period": 20,
-            "std_dev_multiplier": 2.0,
-            "use_rebound": True
-        },
-        "momentum_return": {
-            "return_window": 30,
-            "threshold": 0.05
-        },
+        "period": "7d",  # 1분봉의 최대 허용 기간
+        "interval": "1m",
+        "rsi": 9,  # 민감도 높은 단기 RSI
+        "ma_cross": {"short": 5, "long": 20},
+        "macd": {"short": 6, "long": 13, "signal": 5},  # 빠른 반응용
+        "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": False},
+        "momentum_return": {"return_window": 5, "threshold": 0.02}  # 짧은 수익률 판단
     },
     "settings": {
         "short": {
-            "period": "30d",
-            "interval": "10m",
-            "rsi": 14,  # 단기 RSI 기간 설정
-            "ma_cross": {
-                "short": 5,
-                "long": 20
-            },
-            "macd": {
-                "short": 12,
-                "long": 26,
-                "signal": 9
-            },
-            "bollinger": {
-                "period": 20,
-                "std_dev_multiplier": 2.0,
-                "use_rebound": False
-            },
-            "momentum_return": {
-                "return_window": 30,
-                "threshold": 0.05
-            },
+            "period": "30d",  # 1분봉의 최대 허용 기간
+            "interval": "5m",
+            "rsi": 14,
+            "ma_cross": {"short": 5, "long": 20},
+            "macd": {"short": 6, "long": 13, "signal": 5},  # 빠른 반응용
+            "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": False},
+            "momentum_return": {"return_window": 5, "threshold": 0.02}  # 짧은 수익률 판단
         },
         "middle": {
             "period": "3mo",
-            "interval": "1h",
+            "interval": "30m",
             "rsi": 14,
-            "ma_cross": {
-                "short": 5,
-                "long": 20
-            },
-            "macd": {
-                "short": 12,
-                "long": 26,
-                "signal": 9
-            },
-            "bollinger": {
-                "period": 20,
-                "std_dev_multiplier": 2.0,
-                "use_rebound": True
-            },
-            "momentum_return": {
-                "return_window": 30,
-                "threshold": 0.05
-            }
+            "ma_cross": {"short": 10, "long": 50},
+            "macd": {"short": 12, "long": 26, "signal": 9},
+            "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": True},
+            "momentum_return": {"return_window": 20, "threshold": 0.04}
         },
         "long": {
-            "period": "1y",  # 장기 데이터 기본 설정
+            "period": "1y",
             "interval": "1d",
-            "rsi": 14,  # 장기 RSI 기간 설정
-            "ma_cross": {
-                "short": 5,
-                "long": 20
-            },
-            "macd": {
-                "short": 12,
-                "long": 26,
-                "signal": 9
-            },
-            "bollinger": {
-                "period": 20,
-                "std_dev_multiplier": 2.0,
-                "use_rebound": True
-            },
-            "momentum_return": {
-                "return_window": 30,
-                "threshold": 0.05
-            },
+            "rsi": 14,
+            "ma_cross": {"short": 20, "long": 100},  # 추세 중심
+            "macd": {"short": 12, "long": 26, "signal": 9},
+            "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": True},
+            "momentum_return": {"return_window": 60, "threshold": 0.1}  # 장기 모멘텀 판단
         }
     },
     "backtest": {
@@ -151,6 +95,7 @@ def save_config(config):
     except Exception as e:
         logging.error(f"Error saving config: {e}")
 
+
 def ensure_watchlist_file():
     if not os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
@@ -166,6 +111,7 @@ def ensure_watchlist_file():
             logging.error(f"⚠️ watchlist.json 오류: {e}. 기본값으로 초기화합니다.")
             with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
                 json.dump(DEFAULT_WATCHLIST, f, indent=2)
+
 
 # config 로드
 config = load_config()
