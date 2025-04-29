@@ -100,28 +100,35 @@ def calculate_bollinger_bands(historical_data):
 
 
 def auto_set_interval_by_period():
-    period = config.config["current"]["period"]
-
-    if period.endswith("d"):
-        days = int(period.replace("d", ""))
-        if days <= 7:
-            interval = "1m"
-        elif days <= 60:
-            interval = "5m"
-        elif days <= 365:
-            interval = "1h"
+    period = config["current"].get("period", "1y")  # 혹시 누락되었을 경우 기본 "1y"
+    try:
+        if isinstance(period, str):
+            if period.endswith("d"):
+                days = int(period.replace("d", ""))
+                if days <= 7:
+                    interval = "1m"
+                elif days <= 60:
+                    interval = "5m"
+                elif days <= 365:
+                    interval = "1h"
+                else:
+                    interval = "1d"
+            elif period.endswith("mo"):
+                interval = "1h"
+            elif period.endswith("y"):
+                interval = "1d"
+            elif period == "max":
+                interval = "1d"
+            else:
+                raise ValueError("Unsupported period format")
         else:
-            interval = "1d"
-    elif period.endswith("mo"):
-        interval = "1h"
-    elif period.endswith("y"):
+            raise ValueError("Period must be a string")
+    except Exception as e:
+        print(f"⚠️ Invalid period '{period}' detected: {e}. Reverting to default '1y' + '1d'")
+        config["current"]["period"] = "1y"
         interval = "1d"
-    elif period == "max":
-        interval = "1d"
-    else:
-        interval = "1d"  # fallback
 
-    config.config["current"]["interval"] = interval
+    config["current"]["interval"] = interval
     config.save_config(config.config)
 
 # 종목 데이터 가져오기
