@@ -98,10 +98,37 @@ def calculate_bollinger_bands(historical_data):
 
     return upper_band, lower_band, rolling_mean
 
+
+def auto_set_interval_by_period():
+    period = config.config["current"]["period"]
+
+    if period.endswith("d"):
+        days = int(period.replace("d", ""))
+        if days <= 7:
+            interval = "1m"
+        elif days <= 60:
+            interval = "5m"
+        elif days <= 365:
+            interval = "1h"
+        else:
+            interval = "1d"
+    elif period.endswith("mo"):
+        interval = "1h"
+    elif period.endswith("y"):
+        interval = "1d"
+    elif period == "max":
+        interval = "1d"
+    else:
+        interval = "1d"  # fallback
+
+    config.config["current"]["interval"] = interval
+    config.save_config(config.config)
+
 # 종목 데이터 가져오기
 def fetch_stock_data(ticker):
     try:
         ticker_data = yf.Ticker(ticker)
+        auto_set_interval_by_period()
         # 장중일 때와 비장중일 때 데이터 요청 방식 처리
         if is_market_open():
             historical_data = ticker_data.history(period=config.config["current"]["period"],

@@ -42,6 +42,7 @@ def on_radio_select():
     # 선택된 값에 맞는 데이터 요청 방식 변경
     if selected_value == "short":
         config.config["current"]["period"] = config.config["settings"]["short"]["period"]
+        config.config["current"]["interval"] = config.config["settings"]["short"]["interval"]
         config.config["current"]["rsi"] = config.config["settings"]["short"]["rsi"]
         config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"]["short"]["ma_cross"])
         config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["short"]["macd"])
@@ -51,6 +52,7 @@ def on_radio_select():
 
     elif selected_value == "long":
         config.config["current"]["period"] = config.config["settings"]["long"]["period"]
+        config.config["current"]["interval"] = config.config["settings"]["long"]["interval"]
         config.config["current"]["rsi"] = config.config["settings"]["long"]["rsi"]
         config.config["current"]["ma_cross"] = copy.deepcopy(config.config["settings"]["long"]["ma_cross"])
         config.config["current"]["macd"] = copy.deepcopy(config.config["settings"]["long"]["macd"])
@@ -187,7 +189,7 @@ def update_market_status():
 
     status = guess_market_session()
     # Construct the full text
-    full_text = f"{status}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
+    full_text = f"{status}\n주식 수신 주기(정규장만 해당): {config.config["current"]["interval"]}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
 
     # Update the market status label with color (only change market status color)
     market_status_label.config(
@@ -289,7 +291,7 @@ def main():
     root = tk.Tk()
     root.withdraw()  # ✅ 먼저 숨긴다 (root 안보이게)
     splash = show_splash(root)  # 1. 로딩 화면 먼저 띄움
-    root.title("미국 주식 실시간 모니터링(매 1분)")
+    root.title(f'미국 주식 실시간 모니터링')
 
     add_reload_button(root)
     market_status_label = tk.Label(root, text="주식장 종료\n한국 시간:\n미국 시간:",

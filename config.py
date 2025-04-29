@@ -7,7 +7,7 @@ CONFIG_FILE = 'config.json'
 default_config = {
     "view_mode": "short",  # 기본값: short (단기)
     "current": {
-        "period": "14d",
+        "period": "7d",
         "interval": "1m",
         "rsi": 14,
         "ma_cross": {
@@ -31,7 +31,8 @@ default_config = {
     },
     "settings": {
         "short": {
-            "period": "14d",  # 단기 데이터 기본 설정
+            "period": "7d",  # 단기 데이터 기본 설정
+            "interval": "1m",
             "rsi": 14,  # 단기 RSI 기간 설정
             "ma_cross": {
                 "short": 5,
@@ -54,6 +55,7 @@ default_config = {
         },
         "long": {
             "period": "1y",  # 장기 데이터 기본 설정
+            "interval": "1d",
             "rsi": 14,  # 장기 RSI 기간 설정
             "ma_cross": {
                 "short": 5,
