@@ -195,8 +195,8 @@ def open_backtest_popup(stock, on_search_callback=None):
 
         # 가격 차트
         ax_price.plot(data.index, data['Close'], label='Close Price', color='black', linewidth=1.5)
-        ax_price.plot(data.index, short_ma, label='Short MA (5)', linestyle='--', color='blue', linewidth=1.5)
-        ax_price.plot(data.index, long_ma, label='Long MA (20)', linestyle='--', color='orange', linewidth=1.5)
+        ax_price.plot(data.index, short_ma, label=f'Short MA ({config.config['current']['ma_cross']['short']})', linestyle='--', color='blue', linewidth=1.5)
+        ax_price.plot(data.index, long_ma, label=f'Long MA ({config.config['current']['ma_cross']['long']})', linestyle='--', color='orange', linewidth=1.5)
         ax_price.fill_between(data.index, lower_band, upper_band, color='lightgray', alpha=0.3,
                               label='Bollinger Band Area')
 
