@@ -45,9 +45,9 @@ for log_file in glob.glob(os.path.join(LOG_DIR, "*.log*")):
         if age_days > RETENTION_DAYS:
             try:
                 os.remove(log_file)
-                print(f"[로그 정리] {log_file} 삭제됨 (나이: {age_days:.1f}일)")
+                logging.info(f"[로그 정리] {log_file} 삭제됨 (나이: {age_days:.1f}일)")
             except Exception as e:
-                print(f"[오류] {log_file} 삭제 실패: {e}")
+                logging.error(f"[오류] {log_file} 삭제 실패: {e}")
 # 2️⃣ 로깅 핸들러 설정 (순환 저장)
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
@@ -83,6 +83,10 @@ def on_radio_select():
     config.config["current"]["bollinger"] = copy.deepcopy(config.config["settings"][selected_value]["bollinger"])
     config.config["current"]["momentum_return"] = copy.deepcopy(config.config["settings"][selected_value]["momentum_return"])
 
+    # backtest에서도 정보 불러오게 함
+    backtest = split_period_string(config.config["current"]["period"])
+    config.config["backtest"]['period'] = backtest[0]
+    config.config["backtest"]['unit'] = backtest[1]
     # 설정을 저장
     config.config["view_mode"] = selected_value  # 선택된 데이터 유형을 저장
     config.save_config(config.config)
@@ -98,6 +102,17 @@ def refresh_table():
 
     refresh_table_once()
 
+def split_period_string(period_str):
+    """
+    '30d', '3mo', '1y' 같은 문자열을 (숫자, 단위) 튜플로 반환
+    """
+    match = re.match(r"(\d+)([a-zA-Z]+)", period_str)
+    if match:
+        number = int(match.group(1))
+        unit = match.group(2)
+        return number, unit
+    else:
+        raise ValueError(f"Invalid period format: {period_str}")
 
 # 종목 추가 함수 (티커 입력 기반, yfinance 검색)
 def add_ticker():
@@ -194,10 +209,10 @@ def monitor_stocks():
         session = guess_market_session()
         if session != "주식장 종료":
             # 장중일 경우 1분 간격으로 데이터 갱신
-            print(f'{session} - 데이터 갱신 중...')
+            logging.info(f'{session} - 데이터 갱신 중...')
             time.sleep(60)  # 1분 간격으로 실행
         else:
-            print("시장 종료 - 데이터 갱신 중단...")
+            logging.info("시장 종료 - 데이터 갱신 중단...")
             break
 
 
@@ -212,7 +227,7 @@ def update_market_status():
 
     status = guess_market_session()
     # Construct the full text
-    full_text = f"{status}\n{config.config["current"]["period"]} - {config.config["current"]["interval"]}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
+    full_text = f"{status}\nperiod: {config.config["current"]["period"]}, interval: {config.config["current"]["interval"]}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
 
     # Update the market status label with color (only change market status color)
     market_status_label.config(
@@ -322,7 +337,7 @@ def main():
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.withdraw()  # ✅ 먼저 숨긴다 (root 안보이게)
     splash = show_splash(root)  # 1. 로딩 화면 먼저 띄움
-    root.title(f'미국 주식 실시간 모니터링')
+    root.title(f'미국 주식 모니터링')
 
     add_reload_button(root)
     market_status_label = tk.Label(root, text="주식장 종료\n한국 시간:\n미국 시간:",

@@ -1,3 +1,4 @@
+import logging
 import time
 from datetime import datetime, time as dt_time
 
@@ -32,7 +33,7 @@ class MarketTrendManager:
             else:
                 return "Sideways"
         except Exception as e:
-            print(f"Error detecting market trend: {e}")
+            logging.error(f"Error detecting market trend: {e}")
             return "Unknown"
 
     def get_market_trend(self):
@@ -56,7 +57,7 @@ class MarketTrendManager:
             self.market_source = market_source
             return market_source
         except Exception as e:
-            print(f"Error guessing market source for {ticker}: {e}")
+            logging.error(f"Error guessing market source for {ticker}: {e}")
             self.market_source = "SPY"
             return "SPY"
 

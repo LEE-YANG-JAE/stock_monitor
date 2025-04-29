@@ -54,8 +54,8 @@ def open_backtest_popup(stock, on_search_callback=None):
             end_label.config(text=f"종료일: {now.strftime('%Y-%m-%d')}")
 
             if save:
-                config.config["backtest"]["period_value"] = value
-                config.config["backtest"]["period_unit"] = unit
+                config.config["backtest"]["period"] = value
+                config.config["backtest"]["unit"] = unit
                 config.save_config(config.config)
 
         except ValueError as e:
@@ -76,8 +76,8 @@ def open_backtest_popup(stock, on_search_callback=None):
             messagebox.showerror("오류", "기간 단위를 d, mo, y 중 하나로 선택하세요.")
             return
 
-        config.config["backtest"]["period_value"] = value
-        config.config["backtest"]["period_unit"] = unit
+        config.config["backtest"]["period"] = value
+        config.config["backtest"]["unit"] = unit
         config.config["backtest"]["method"] = method
         config.save_config(config.config)
 
@@ -257,10 +257,7 @@ def open_backtest_popup(stock, on_search_callback=None):
         if data.empty:
             messagebox.showerror("데이터 없음", f"{ticker_symbol}에 대한 데이터를 가져올 수 없습니다.")
             return
-        print("[디버그] 현재 data.columns:", data.columns.tolist())
-
         close_prices = data['Close']
-        print("[디버그] Close 데이터:", close_prices.head())
 
         match method:
             case "macd":
@@ -309,7 +306,6 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 upper_band_df = pd.DataFrame({'UpperBand': upper_band})
                 lower_band_df = pd.DataFrame({'LowerBand': lower_band})
-                print(pd.concat([upper_band_df, lower_band_df], axis=1).head())
 
                 data['MA'] = ma
                 data['STD'] = std
@@ -320,7 +316,7 @@ def open_backtest_popup(stock, on_search_callback=None):
                 if all(col in data.columns for col in expected_cols):
                     data = data.dropna(subset=expected_cols)
                 else:
-                    print(f"[경고] {expected_cols} 컬럼이 존재하지 않습니다. 현재 컬럼들: {data.columns.tolist()}")
+                    logging.error(f"[경고] {expected_cols} 컬럼이 존재하지 않습니다. 현재 컬럼들: {data.columns.tolist()}")
 
                 use_rebound_confirmation = config.config["current"]["bollinger"]["use_rebound"]
                 buy_dates = []
@@ -375,10 +371,10 @@ def open_backtest_popup(stock, on_search_callback=None):
                 # 수익률 계산 및 출력
                 if profits:
                     total_return = (1 + pd.Series(profits)).prod() - 1
-                    print(f"[볼린저 밴드] 총 수익률: {total_return:.2%}")
+                    logging.info(f"[볼린저 밴드] 총 수익률: {total_return:.2%}")
                     plot_bollinger(data, buy_dates, sell_dates, ticker_symbol)
                 else:
-                    print("[볼린저 밴드] 거래 없음")
+                    logging.info("[볼린저 밴드] 거래 없음")
                     messagebox.showerror("데이터 없음", f"[볼린저 밴드]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
             case "ma_cross":
                 # 단기 이동평균선과 장기 이동평균선을 계산
@@ -387,8 +383,6 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 short_ma = data['Close'].rolling(window=short_window).mean()
                 long_ma = data['Close'].rolling(window=long_window).mean()
-
-                print("[디버그] 단기/장기 이동평균 생성 완료:", short_ma.head(), long_ma.head())
 
                 # Short_MA, Long_MA 컬럼 데이터프레임에 추가
                 data['Short_MA'] = short_ma
@@ -426,7 +420,7 @@ def open_backtest_popup(stock, on_search_callback=None):
                 # 수익률 출력
                 if profits:
                     total_return = (1 + pd.Series(profits)).prod() - 1
-                    print(f"[이동평균 교차] 총 수익률: {total_return:.2%}")
+                    logging.info(f"[이동평균 교차] 총 수익률: {total_return:.2%}")
 
                     # 그래프 표시
                     plot_ma_cross(data, buy_dates, sell_dates, ticker_symbol)
@@ -558,9 +552,9 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 if profits:
                     total_return = (1 + pd.Series(profits)).prod() - 1
-                    print(f"[모멘텀] 총 수익률: {total_return:.2%}")
+                    logging.info(f"[모멘텀] 총 수익률: {total_return:.2%}")
                 else:
-                    print("[모멘텀] 거래 없음")
+                    logging.info("[모멘텀] 거래 없음")
 
                 # 그래프 출력
                 plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates,
@@ -604,7 +598,7 @@ def open_backtest_popup(stock, on_search_callback=None):
 
                 if profits:
                     total_return = (1 + pd.Series(profits)).prod() - 1
-                    print(f"[모멘텀 수익률 + MA 교차] 총 수익률: {total_return:.2%}")
+                    logging.info(f"[모멘텀 수익률 + MA 교차] 총 수익률: {total_return:.2%}")
                     plot_ma_cross(data, buy_dates, sell_dates, ticker_symbol)
                 else:
                     messagebox.showerror("데이터 없음", f"[모멘텀 수익률 + MA 교차] 거래 없음")
@@ -629,7 +623,7 @@ def open_backtest_popup(stock, on_search_callback=None):
     tk.Label(frame, text="기간 숫자:").grid(row=0, column=0, padx=5)
     period_value_entry = tk.Entry(frame, width=5)
     period_value_entry.grid(row=0, column=1, padx=5)
-    period_value_entry.insert(0, config.config["backtest"].get("period_value", 12))
+    period_value_entry.insert(0, config.config["backtest"].get("period", 12))
     period_value_entry.bind("<KeyRelease>", lambda event: update_dates(save=True))
 
     tk.Label(frame, text="단위:").grid(row=0, column=2, padx=5)
@@ -637,7 +631,7 @@ def open_backtest_popup(stock, on_search_callback=None):
     period_unit_menu = ttk.Combobox(frame, textvariable=period_unit_var, values=["d", "mo", "y"], width=5,
                                     state="readonly")
     period_unit_menu.grid(row=0, column=3, padx=5)
-    period_unit_var.set(config.config["backtest"].get("period_unit", "mo"))
+    period_unit_var.set(config.config["backtest"].get("unit", "mo"))
     period_unit_menu.bind("<<ComboboxSelected>>", lambda event: update_dates(save=True))
 
     tk.Label(frame, text="전략 선택:").grid(row=1, column=0, padx=5)

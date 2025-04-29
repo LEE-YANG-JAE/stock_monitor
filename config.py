@@ -48,8 +48,8 @@ default_config = {
         }
     },
     "backtest": {
-        "period_value": 12,  # 숫자 (예: 12)
-        "period_unit": "mo",  # 단위 (d=일, mo=월, y=년)
+        "period": 12,  # 숫자 (예: 12)
+        "unit": "mo",  # 단위 (d=일, mo=월, y=년)
         "method": "momentum_signal",
     }
 }
@@ -72,7 +72,7 @@ def merge_config(user_config, default_config):
 # config.json 파일에서 설정 읽기
 def load_config():
     if not os.path.exists(CONFIG_FILE):
-        print(f"{CONFIG_FILE} 파일이 없습니다. 기본 설정을 생성합니다.")
+        logging.info(f"{CONFIG_FILE} 파일이 없습니다. 기본 설정을 생성합니다.")
         save_config(default_config)
         return default_config
 

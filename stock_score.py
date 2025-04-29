@@ -1,3 +1,4 @@
+import logging
 import random
 from datetime import datetime
 
@@ -124,7 +125,7 @@ def auto_set_interval_by_period():
         else:
             raise ValueError("Period must be a string")
     except Exception as e:
-        print(f"⚠️ Invalid period '{period}' detected: {e}. Reverting to default '1y' + '1d'")
+        logging.info(f"⚠️ Invalid period '{period}' detected: {e}. Reverting to default '1y' + '1d'")
         config.config["current"]["period"] = "1y"
         interval = "1d"
 
@@ -248,5 +249,5 @@ def fetch_stock_data(ticker):
         )
 
     except Exception as e:
-        print(f"Error fetching data for {ticker}: {e}")
+        logging.error(f"Error fetching data for {ticker}: {e}")
         return None
