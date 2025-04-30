@@ -131,8 +131,8 @@ def open_backtest_popup(stock, on_search_callback=None):
                         label='Sell Signal' if idx == 0 else "")
 
         ax2.plot(close_prices.index, rsi, label='RSI', color='purple')
-        ax2.axhline(70, color='red', linestyle='--', label='과매수 (70)')
-        ax2.axhline(30, color='green', linestyle='--', label='과매도 (30)')
+        ax2.axhline(config.config["current"]["rsi"]['upper'], color='red', linestyle='--', label=f'과매수 ({config.config["current"]["rsi"]['upper']})')
+        ax2.axhline(config.config["current"]["rsi"]['lower'], color='green', linestyle='--', label=f'과매도 ({config.config["current"]["rsi"]['lower']})')
         ax2.set_ylabel('RSI 값')
         ax2.set_ylim(0, 100)
         ax2.grid()
@@ -192,9 +192,9 @@ def open_backtest_popup(stock, on_search_callback=None):
 
         # === 2. RSI Plot ===
         ax2 = plt.subplot(3, 1, 2)
-        ax2.plot(data["RSI"], label="RSI (14)", color="purple")
-        ax2.axhline(70, linestyle="--", color="red", alpha=0.5)
-        ax2.axhline(30, linestyle="--", color="green", alpha=0.5)
+        ax2.plot(data["RSI"], label=f'RSI ({config.config["current"]["rsi"]['period']})', color="purple")
+        ax2.axhline(config.config["current"]["rsi"]['upper'], linestyle="--", color="red", alpha=0.5)
+        ax2.axhline(config.config["current"]["rsi"]['lower'], linestyle="--", color="green", alpha=0.5)
         ax2.set_ylabel("RSI")
         ax2.legend(loc="upper left")
 
@@ -277,9 +277,9 @@ def open_backtest_popup(stock, on_search_callback=None):
         ax_price.grid(linestyle='--', alpha=0.7)
 
         # RSI 차트
-        ax_rsi.plot(data.index, rsi, label='RSI (14)', color='purple')
-        ax_rsi.axhline(70, linestyle='--', color='red', alpha=0.5)
-        ax_rsi.axhline(30, linestyle='--', color='green', alpha=0.5)
+        ax_rsi.plot(data.index, rsi, label=f'RSI ({config.config["current"]["rsi"]['period']})', color='purple')
+        ax_rsi.axhline(config.config["current"]["rsi"]['upper'], linestyle='--', color='red', alpha=0.5)
+        ax_rsi.axhline(config.config["current"]["rsi"]['lower'], linestyle='--', color='green', alpha=0.5)
         ax_rsi.set_ylabel("RSI")
         ax_rsi.legend()
         ax_rsi.grid(linestyle='--', alpha=0.7)
@@ -563,7 +563,7 @@ def open_backtest_popup(stock, on_search_callback=None):
                 macd_short_span = config.config['current']['macd']['short']
                 macd_long_span = config.config['current']['macd']['long']
                 macd_signal_span = config.config['current']['macd']['signal']
-                rsi_period = config.config['current']['rsi']
+                rsi_period = config.config['current']['rsi']['period']
                 bb_period = config.config['current']['bollinger']['period']
                 bb_num_std = config.config['current']['bollinger']['std_dev_multiplier']
                 use_rebound_confirmation = config.config['current']['bollinger']['use_rebound']

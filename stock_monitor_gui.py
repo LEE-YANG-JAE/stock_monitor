@@ -269,9 +269,9 @@ def update_table(data):
                 # Prepare the data for display
                 trend_display = trend
                 rsi_value = float(rsi.replace('%', ''))  # RSI 값 처리
-                if rsi_value > 70:
+                if rsi_value > config.config['current']['rsi']['upper']:
                     rsi_display = f"{rsi} (과매수)"
-                elif rsi_value < 30:
+                elif rsi_value < config.config['current']['rsi']['lower']:
                     rsi_display = f"{rsi} (과매도)"
                 else:
                     rsi_display = f"{rsi} (중립)"
