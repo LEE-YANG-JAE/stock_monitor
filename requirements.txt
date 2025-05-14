@@ -5,3 +5,4 @@ tk
 numpy
 pytz
 holidays
+pyinstaller

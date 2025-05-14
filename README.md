@@ -30,7 +30,7 @@ python stock_monitor_gui.py
 ### 실행 파일 생성 (선택사항)
 
 ```bash
-pyinstaller stock_monitor_gui.spec`
+pyinstaller stock_monitor_gui.spec
 ````
 ---
 ## ⚙ 주요 기능
