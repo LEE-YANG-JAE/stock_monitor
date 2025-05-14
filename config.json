@@ -1,0 +1,118 @@
+{
+    "view_mode": "long",
+    "current": {
+        "period": "1y",
+        "interval": "1d",
+        "rsi": {
+            "period": 14,
+            "lower": 30,
+            "upper": 70
+        },
+        "ma_cross": {
+            "short": 20,
+            "long": 100
+        },
+        "macd": {
+            "short": 12,
+            "long": 26,
+            "signal": 9
+        },
+        "bollinger": {
+            "period": 20,
+            "std_dev_multiplier": 2.0,
+            "use_rebound": true
+        },
+        "momentum_return": {
+            "return_window": 60,
+            "threshold": 0.1
+        }
+    },
+    "settings": {
+        "short": {
+            "period": "30d",
+            "interval": "5m",
+            "rsi": {
+                "period": 14,
+                "lower": 30,
+                "upper": 70
+            },
+            "ma_cross": {
+                "short": 5,
+                "long": 20
+            },
+            "macd": {
+                "short": 6,
+                "long": 13,
+                "signal": 5
+            },
+            "bollinger": {
+                "period": 20,
+                "std_dev_multiplier": 2.0,
+                "use_rebound": false
+            },
+            "momentum_return": {
+                "return_window": 5,
+                "threshold": 0.02
+            }
+        },
+        "middle": {
+            "period": "3mo",
+            "interval": "30m",
+            "rsi": {
+                "period": 14,
+                "lower": 30,
+                "upper": 70
+            },
+            "ma_cross": {
+                "short": 10,
+                "long": 50
+            },
+            "macd": {
+                "short": 12,
+                "long": 26,
+                "signal": 9
+            },
+            "bollinger": {
+                "period": 20,
+                "std_dev_multiplier": 2.0,
+                "use_rebound": true
+            },
+            "momentum_return": {
+                "return_window": 20,
+                "threshold": 0.04
+            }
+        },
+        "long": {
+            "period": "1y",
+            "interval": "1d",
+            "rsi": {
+                "period": 14,
+                "lower": 30,
+                "upper": 70
+            },
+            "ma_cross": {
+                "short": 20,
+                "long": 100
+            },
+            "macd": {
+                "short": 12,
+                "long": 26,
+                "signal": 9
+            },
+            "bollinger": {
+                "period": 20,
+                "std_dev_multiplier": 2.0,
+                "use_rebound": true
+            },
+            "momentum_return": {
+                "return_window": 60,
+                "threshold": 0.1
+            }
+        }
+    },
+    "backtest": {
+        "period": 1,
+        "unit": "y",
+        "method": "bollinger"
+    }
+}
