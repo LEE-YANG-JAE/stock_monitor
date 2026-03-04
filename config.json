@@ -1,7 +1,7 @@
 {
     "view_mode": "long",
     "current": {
-        "period": "1y",
+        "period": "2y",
         "interval": "1d",
         "rsi": {
             "period": 14,
@@ -33,8 +33,8 @@
             "interval": "5m",
             "rsi": {
                 "period": 14,
-                "lower": 30,
-                "upper": 70
+                "lower": 35,
+                "upper": 65
             },
             "ma_cross": {
                 "short": 5,
@@ -83,7 +83,7 @@
             }
         },
         "long": {
-            "period": "1y",
+            "period": "2y",
             "interval": "1d",
             "rsi": {
                 "period": 14,
@@ -111,8 +111,10 @@
         }
     },
     "backtest": {
-        "period": 1,
+        "period": 2,
         "unit": "y",
-        "method": "bollinger"
-    }
+        "method": "ma_cross"
+    },
+    "alert_enabled": true,
+    "hint_shown": true
 }

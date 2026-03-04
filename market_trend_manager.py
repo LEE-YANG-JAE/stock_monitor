@@ -1,10 +1,23 @@
 import logging
 import time
+import threading
 from datetime import datetime, time as dt_time
 
 import holidays
 import pytz
 import yfinance as yf
+
+# Momentum weight constants (Phase 8-4)
+MACD_WEIGHT = 2
+MA_WEIGHT = 1
+BB_WEIGHT = 1
+RSI_WEIGHT = 1
+
+# Signal threshold constants
+STRONG_BUY_THRESHOLD = 4
+BUY_THRESHOLD = 2
+SELL_THRESHOLD = -2
+STRONG_SELL_THRESHOLD = -4
 
 
 class MarketTrendManager:
@@ -16,6 +29,7 @@ class MarketTrendManager:
         self.market_source = ""
         self.market_session = ""
         self.momentum = ""
+        self._lock = threading.Lock()  # Phase 2-3: cache thread safety
 
     def detect_market_trend(self):
         try:
@@ -32,37 +46,43 @@ class MarketTrendManager:
                 return "Downtrend"
             else:
                 return "Sideways"
+        except (ConnectionError, TimeoutError) as e:
+            logging.error(f"[MARKET] Network error detecting trend: {e}")
+            return "Unknown"
         except Exception as e:
-            logging.error(f"Error detecting market trend: {e}")
+            logging.error(f"[MARKET] Error detecting market trend: {e}")
             return "Unknown"
 
     def get_market_trend(self):
-        current_time = time.time()
-        if current_time - self.last_refresh_time > self.refresh_interval:
-            self.market_trend = self.detect_market_trend()
-            self.last_refresh_time = current_time
-        return self.market_trend
+        with self._lock:
+            current_time = time.time()
+            if current_time - self.last_refresh_time > self.refresh_interval:
+                self.market_trend = self.detect_market_trend()
+                self.last_refresh_time = current_time
+            return self.market_trend
 
     def guess_market_source(self, ticker):
         try:
             info = yf.Ticker(ticker).info
             exchange = info.get('exchange', '')
             sector = info.get('sector', '')
-            market_source = ""
 
-            if exchange in ["NasdaqGS", "Nasdaq"]:
-                market_source = "QQQ"
-            if sector in ["Technology", "Semiconductors", "Internet"]:
-                market_source = "QQQ"
-            self.market_source = market_source
-            return market_source
+            # Phase 3-3: if→elif fix, ensure default "SPY" return
+            if exchange in ("NasdaqGS", "Nasdaq"):
+                self.market_source = "QQQ"
+            elif sector in ("Technology", "Semiconductors", "Internet"):
+                self.market_source = "QQQ"
+            else:
+                self.market_source = "SPY"
+            return self.market_source
         except Exception as e:
-            logging.error(f"Error guessing market source for {ticker}: {e}")
+            logging.error(f"[MARKET] Error guessing source for {ticker}: {e}")
             self.market_source = "SPY"
             return "SPY"
 
 
 def guess_market_session():
+    """시장 세션 판별 — 통합 함수 (Phase 3-11)"""
     ny_time_zone = pytz.timezone('America/New_York')
     now = datetime.now(ny_time_zone)
     ny_time = now.time()
@@ -70,65 +90,61 @@ def guess_market_session():
     us_holidays = holidays.country_holidays('US')
     market_status = "주식장 종료"
 
-    if now.date() in us_holidays or now.weekday() >= 5:  # 토요일(5), 일요일(6):
+    if now.date() in us_holidays or now.weekday() >= 5:
         return market_status
 
-    is_dst = bool(now.dst())  # 서머타임 적용 여부
-    if is_dst:
-        if dt_time(9, 30) <= ny_time <= dt_time(16, 0):
-            market_status = "정규장"
-        elif dt_time(4, 0) <= ny_time < dt_time(9, 30):
-            market_status = "프리장"
-        elif dt_time(16, 0) < ny_time <= dt_time(20, 0):
-            market_status = "애프터장"
-    else:
-        if dt_time(10, 30) <= ny_time <= dt_time(17, 0):
-            market_status = "정규장"
-        elif dt_time(5, 0) <= ny_time < dt_time(10, 30):
-            market_status = "프리장"
-        elif dt_time(17, 0) < ny_time <= dt_time(21, 0):
-            market_status = "애프터장"
+    # ny_time은 이미 뉴욕 현지 시간 (DST 자동 반영)이므로
+    # 정규장/프리장/애프터장 기준은 항상 동일
+    if dt_time(9, 30) <= ny_time <= dt_time(16, 0):
+        market_status = "정규장"
+    elif dt_time(4, 0) <= ny_time < dt_time(9, 30):
+        market_status = "프리장"
+    elif dt_time(16, 0) < ny_time <= dt_time(20, 0):
+        market_status = "애프터장"
 
     return market_status
+
+
+def is_market_open():
+    """정규장 여부 — guess_market_session() 기반 (Phase 3-11: 중복 로직 통합)"""
+    return guess_market_session() == "정규장"
 
 
 def adjust_momentum_based_on_market(macd_signal, ma_signal, bb_signal, rsi_signal):
     momentum_score = 0
 
     # MACD
-    if macd_signal == "BUY":
-        momentum_score += 2
-    elif macd_signal == "SELL":
-        momentum_score -= 2
+    if "매수" in macd_signal:
+        momentum_score += MACD_WEIGHT
+    elif "매도" in macd_signal:
+        momentum_score -= MACD_WEIGHT
 
     # MA
-    if ma_signal == "BUY":
-        momentum_score += 1
-    elif ma_signal == "SELL":
-        momentum_score -= 1
+    if "매수" in ma_signal:
+        momentum_score += MA_WEIGHT
+    elif "매도" in ma_signal:
+        momentum_score -= MA_WEIGHT
 
     # BB
-    if bb_signal == "BUY":
-        momentum_score += 1
-    elif bb_signal == "SELL":
-        momentum_score -= 1
+    if "매수" in bb_signal:
+        momentum_score += BB_WEIGHT
+    elif "매도" in bb_signal:
+        momentum_score -= BB_WEIGHT
 
     # RSI
-    if rsi_signal == "BUY":
-        momentum_score += 1
-    elif rsi_signal == "SELL":
-        momentum_score -= 1
+    if "매수" in rsi_signal:
+        momentum_score += RSI_WEIGHT
+    elif "매도" in rsi_signal:
+        momentum_score -= RSI_WEIGHT
 
     # 최종 결정
-    if momentum_score >= 4:
-        final_momentum = "STRONG BUY"
-    elif momentum_score >= 2:
-        final_momentum = "BUY"
-    elif momentum_score <= -4:
-        final_momentum = "STRONG SELL"
-    elif momentum_score <= -2:
-        final_momentum = "SELL"
+    if momentum_score >= STRONG_BUY_THRESHOLD:
+        return "강력 매수"
+    elif momentum_score >= BUY_THRESHOLD:
+        return "매수"
+    elif momentum_score <= STRONG_SELL_THRESHOLD:
+        return "강력 매도"
+    elif momentum_score <= SELL_THRESHOLD:
+        return "매도"
     else:
-        final_momentum = "HOLD"
-
-    return final_momentum
+        return "관망"
