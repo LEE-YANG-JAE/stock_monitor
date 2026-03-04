@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from datetime import datetime, timedelta
 from tkinter import ttk, messagebox, filedialog
 
@@ -1043,43 +1044,329 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                     return f"${val/1e6:.0f}M"
                 return f"${val:,.0f}"
 
+            def _safe_get(key):
+                v = info.get(key)
+                if v is None:
+                    return None
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+
+            per = _safe_get("trailingPE")
+            fwd_per = _safe_get("forwardPE")
+            pbr = _safe_get("priceToBook")
+            peg = _safe_get("pegRatio")
+            eps_val = _safe_get("trailingEps")
+            div_val = _safe_get("dividendYield")
+            roe_val = _safe_get("returnOnEquity")
+            om_val = _safe_get("operatingMargins")
+            ev_ebitda = _safe_get("enterpriseToEbitda")
+            debt_equity = _safe_get("debtToEquity")
+            current_ratio = _safe_get("currentRatio")
+            rev_growth = _safe_get("revenueGrowth")
+            earn_growth = _safe_get("earningsGrowth")
+
+            # PEG 직접 계산 fallback: PER ÷ (이익성장률 × 100)
+            peg_calculated = False
+            if peg is None and per is not None and earn_growth is not None:
+                eg_pct = earn_growth * 100
+                if eg_pct > 0:
+                    peg = per / eg_pct
+                    peg_calculated = True
+            fcf = _safe_get("freeCashflow")
+            current_price = _safe_get("currentPrice")
+            hi = _safe_get("fiftyTwoWeekHigh")
+            lo = _safe_get("fiftyTwoWeekLow")
+            book_val = _safe_get("bookValue")
+
+            # 지표별 툴팁 설명
+            INDICATOR_TOOLTIPS = {
+                "PER": "주가수익비율 (Price to Earnings Ratio)\n주가 ÷ 주당순이익(EPS).\n낮을수록 이익 대비 주가가 싸다는 뜻.\n일반적으로 15 이하면 저평가, 30 이상이면 고평가로 봅니다.\n업종마다 평균이 다르므로 같은 업종끼리 비교해야 합니다.",
+                "Fwd PER": "선행 주가수익비율 (Forward PER)\n현재 주가 ÷ 향후 12개월 예상 EPS.\nPER은 과거 실적, Fwd PER은 미래 예상 실적 기준입니다.\n애널리스트 추정치 기반이므로 실제와 다를 수 있습니다.",
+                "PBR": "주가순자산비율 (Price to Book Ratio)\n주가 ÷ 주당순자산(BPS).\n1 미만이면 회사 청산가치보다 싸게 거래된다는 뜻.\n1.5 이하면 저평가, 5 이상이면 고평가 기준을 적용합니다.\n기술주는 PBR이 높은 경우가 많습니다.",
+                "PEG": "주가수익성장비율 (PEG Ratio)\nPER ÷ 이익성장률(%).\n성장성을 감안한 밸류에이션 지표입니다.\n1.0 이하면 성장 대비 저평가, 2.0 이상이면 고평가.\nPER이 높아도 성장률이 높으면 PEG는 낮을 수 있습니다.\n\nyfinance에서 제공되지 않는 경우\nPER ÷ (이익성장률×100)으로 직접 계산합니다.\n이 경우 '(추정)' 표시가 붙습니다.",
+                "EPS": "주당순이익 (Earnings Per Share)\n순이익 ÷ 발행주식 수.\n회사가 주식 1주당 얼마를 벌었는지 나타냅니다.\nEPS가 꾸준히 증가하면 실적이 성장하고 있다는 신호입니다.",
+                "시가총액": "시가총액 (Market Capitalization)\n현재 주가 × 발행주식 수.\n회사의 전체 시장 가치를 나타냅니다.\n대형주(Large Cap): $10B 이상\n중형주(Mid Cap): $2B~$10B\n소형주(Small Cap): $2B 미만",
+                "배당": "배당수익률 (Dividend Yield)\n연간 배당금 ÷ 현재 주가 × 100.\n주가 대비 매년 받는 배당금 비율입니다.\n보통 2~4%면 양호한 배당주로 봅니다.\n0%면 배당을 하지 않는 성장주일 수 있습니다.",
+                "FCF": "잉여현금흐름 (Free Cash Flow)\n영업활동 현금흐름 - 설비투자.\n회사가 실제로 자유롭게 쓸 수 있는 현금입니다.\n배당, 자사주 매입, 부채 상환 등에 활용됩니다.\nFCF가 꾸준히 양수이면 재무 건전성이 좋은 신호입니다.",
+                "ROE": "자기자본이익률 (Return on Equity)\n순이익 ÷ 자기자본 × 100.\n주주가 투자한 돈으로 얼마나 효율적으로 벌었는지.\n15% 이상이면 우수, 5% 미만이면 부진으로 봅니다.\n워런 버핏이 중시하는 핵심 지표입니다.",
+                "영업이익률": "영업이익률 (Operating Margin)\n영업이익 ÷ 매출 × 100.\n본업에서 얼마나 효율적으로 이익을 내는지.\n높을수록 원가 관리가 잘 되고 경쟁력이 있다는 뜻입니다.\n업종별 평균이 크게 다르므로 동종 업계와 비교하세요.",
+                "부채비율": "부채비율 (Debt to Equity Ratio)\n총부채 ÷ 자기자본 × 100.\n100% 미만이면 자기자본이 부채보다 많아 안정적.\n200% 이상이면 부채 부담이 크다는 경고 신호입니다.\n금융업은 구조적으로 부채비율이 높습니다.",
+                "유동비율": "유동비율 (Current Ratio)\n유동자산 ÷ 유동부채.\n1년 내 갚아야 할 빚을 감당할 능력입니다.\n1.0 이상이면 단기 채무 상환 능력 양호.\n2.0 이상이면 매우 안정적, 1.0 미만이면 유동성 위험.",
+                "EV/EBITDA": "기업가치 대비 EBITDA\n(시가총액+순부채) ÷ (세전·이자·감가상각 전 이익).\nPER보다 기업의 실질 수익력을 잘 반영합니다.\n부채와 감가상각 영향을 제거해 기업 간 비교에 유리.\n10 이하면 저평가, 20 이상이면 고평가 기준을 적용합니다.",
+                "매출성장률": "매출성장률 (Revenue Growth)\n전년 동기 대비 매출 증가율.\n회사의 사업이 얼마나 빠르게 성장하는지.\n양수면 매출이 늘고 있고, 음수면 줄고 있습니다.\n성장주는 보통 10% 이상의 매출성장률을 보입니다.",
+                "이익성장률": "이익성장률 (Earnings Growth)\n전년 동기 대비 순이익 증가율.\n매출뿐 아니라 실제 이익이 늘고 있는지 확인합니다.\n이익성장률이 매출성장률보다 높으면\n수익성이 개선되고 있다는 긍정적 신호입니다.",
+                "52주": "52주 최저/최고가\n최근 1년간 거래된 가격의 범위입니다.\n현재가가 52주 고점 근처면 강한 상승 추세이거나 고평가.\n52주 저점 근처면 약세이거나 저평가 매수 기회일 수 있습니다.\n고점 대비 20% 이상 하락 시 저평가 기준을 적용합니다.",
+                "현재가": "현재 거래 가격 (Current Price)\n장중에는 실시간 가격, 장 마감 후에는 종가입니다.\n적정가격과 비교해 매수/매도 판단의 기준이 됩니다.",
+            }
+
+            def _make_indicator_label(parent, label, value, tooltip_key=None):
+                """지표 라벨을 생성하고 툴팁을 붙입니다."""
+                lbl = tk.Label(parent, text=f"{label}: {value}", font=("Arial", 9), cursor="question_arrow")
+                lbl.pack(side=tk.LEFT, padx=(0, 16))
+                key = tooltip_key or label
+                if key in INDICATOR_TOOLTIPS:
+                    HelpTooltip(lbl, INDICATOR_TOOLTIPS[key])
+                return lbl
+
+            # Row 1: PER, Fwd PER, PBR, PEG
             row1 = tk.Frame(indicator_frame)
             row1.pack(fill=tk.X, padx=8, pady=2)
+            peg_display = _fmt(peg)
+            if peg is not None and peg_calculated:
+                peg_display += " (추정)"
             for label, value in [
-                ("PER", _fmt(info.get("trailingPE"))),
-                ("Fwd PER", _fmt(info.get("forwardPE"))),
-                ("PBR", _fmt(info.get("priceToBook"))),
+                ("PER", _fmt(per)),
+                ("Fwd PER", _fmt(fwd_per)),
+                ("PBR", _fmt(pbr)),
+                ("PEG", peg_display),
             ]:
-                tk.Label(row1, text=f"{label}: {value}", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 16))
+                _make_indicator_label(row1, label, value)
 
+            # Row 2: EPS, 시가총액, 배당, FCF
             row2 = tk.Frame(indicator_frame)
             row2.pack(fill=tk.X, padx=8, pady=2)
-            eps_val = info.get("trailingEps")
-            div_val = info.get("dividendYield")
             for label, value in [
                 ("EPS", _fmt(eps_val, prefix="$") if eps_val is not None else "N/A"),
                 ("시가총액", _fmt_cap(info.get("marketCap"))),
                 ("배당", _fmt(div_val * 100 if div_val else None, suffix="%")),
+                ("FCF", _fmt_cap(fcf) if fcf is not None else "N/A"),
             ]:
-                tk.Label(row2, text=f"{label}: {value}", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 16))
+                _make_indicator_label(row2, label, value)
 
+            # Row 3: ROE, 영업이익률, 부채비율, 유동비율
             row3 = tk.Frame(indicator_frame)
             row3.pack(fill=tk.X, padx=8, pady=2)
-            roe_val = info.get("returnOnEquity")
-            om_val = info.get("operatingMargins")
             for label, value in [
                 ("ROE", _fmt(roe_val * 100 if roe_val else None, suffix="%")),
                 ("영업이익률", _fmt(om_val * 100 if om_val else None, suffix="%")),
+                ("부채비율", _fmt(debt_equity, fmt=".1f", suffix="%") if debt_equity is not None else "N/A"),
+                ("유동비율", _fmt(current_ratio)),
             ]:
-                tk.Label(row3, text=f"{label}: {value}", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 16))
+                _make_indicator_label(row3, label, value)
 
+            # Row 4: EV/EBITDA, 매출성장률, 이익성장률
             row4 = tk.Frame(indicator_frame)
-            row4.pack(fill=tk.X, padx=8, pady=(2, 4))
-            hi = info.get("fiftyTwoWeekHigh")
-            lo = info.get("fiftyTwoWeekLow")
+            row4.pack(fill=tk.X, padx=8, pady=2)
+            for label, value in [
+                ("EV/EBITDA", _fmt(ev_ebitda)),
+                ("매출성장률", _fmt(rev_growth * 100 if rev_growth is not None else None, fmt=".1f", suffix="%")),
+                ("이익성장률", _fmt(earn_growth * 100 if earn_growth is not None else None, fmt=".1f", suffix="%")),
+            ]:
+                _make_indicator_label(row4, label, value)
+
+            # Row 5: 52주, 현재가
+            row5 = tk.Frame(indicator_frame)
+            row5.pack(fill=tk.X, padx=8, pady=(2, 4))
             hi_s = f"${hi:.2f}" if hi else "N/A"
             lo_s = f"${lo:.2f}" if lo else "N/A"
-            tk.Label(row4, text=f"52주: {lo_s} ~ {hi_s}", font=("Arial", 9)).pack(side=tk.LEFT)
+            price_s = f"${current_price:.2f}" if current_price else "N/A"
+            _make_indicator_label(row5, "52주", f"{lo_s} ~ {hi_s}")
+            _make_indicator_label(row5, "현재가", price_s)
+
+            # --- 저평가/고평가 판단 (점수제) ---
+            score = 0
+            criteria = {}  # name -> +1(저평가), -1(고평가), 0(중립)
+
+            if per is not None:
+                if per <= 15:
+                    criteria["PER"] = 1
+                elif per >= 30:
+                    criteria["PER"] = -1
+                else:
+                    criteria["PER"] = 0
+            else:
+                criteria["PER"] = None
+
+            if pbr is not None:
+                if pbr <= 1.5:
+                    criteria["PBR"] = 1
+                elif pbr >= 5:
+                    criteria["PBR"] = -1
+                else:
+                    criteria["PBR"] = 0
+            else:
+                criteria["PBR"] = None
+
+            if peg is not None:
+                if peg <= 1.0:
+                    criteria["PEG"] = 1
+                elif peg >= 2.0:
+                    criteria["PEG"] = -1
+                else:
+                    criteria["PEG"] = 0
+            else:
+                criteria["PEG"] = None
+
+            if ev_ebitda is not None:
+                if ev_ebitda <= 10:
+                    criteria["EV/EBITDA"] = 1
+                elif ev_ebitda >= 20:
+                    criteria["EV/EBITDA"] = -1
+                else:
+                    criteria["EV/EBITDA"] = 0
+            else:
+                criteria["EV/EBITDA"] = None
+
+            if roe_val is not None:
+                roe_pct = roe_val * 100
+                if roe_pct >= 15:
+                    criteria["ROE"] = 1
+                elif roe_pct < 5:
+                    criteria["ROE"] = -1
+                else:
+                    criteria["ROE"] = 0
+            else:
+                criteria["ROE"] = None
+
+            if debt_equity is not None:
+                if debt_equity < 100:
+                    criteria["부채"] = 1
+                elif debt_equity >= 200:
+                    criteria["부채"] = -1
+                else:
+                    criteria["부채"] = 0
+            else:
+                criteria["부채"] = None
+
+            if hi is not None and current_price is not None and hi > 0:
+                drop_pct = (hi - current_price) / hi * 100
+                if drop_pct >= 20:
+                    criteria["52주"] = 1
+                elif drop_pct <= 5:
+                    criteria["52주"] = -1
+                else:
+                    criteria["52주"] = 0
+            else:
+                criteria["52주"] = None
+
+            valid_scores = [v for v in criteria.values() if v is not None]
+            score = sum(valid_scores)
+            total_criteria = len(valid_scores)
+
+            # --- 적정 가격 계산 ---
+            fair_prices = []
+            # 1) PER 기반: EPS × 업종평균PER (없으면 15)
+            if eps_val is not None and eps_val > 0:
+                sector_per = _safe_get("sectorPE") or _safe_get("industryPE") or 15
+                fair_prices.append(eps_val * sector_per)
+
+            # 2) PBR 기반: bookValue × 1.0
+            if book_val is not None and book_val > 0:
+                fair_prices.append(book_val * 1.0)
+
+            # 3) DCF 간이: EPS × (1+earningsGrowth)^5 × 15 / (1.1^5)
+            if eps_val is not None and eps_val > 0 and earn_growth is not None:
+                growth = max(earn_growth, -0.5)  # 성장률 하한
+                future_eps = eps_val * ((1 + growth) ** 5)
+                dcf_price = future_eps * 15 / (1.1 ** 5)
+                if dcf_price > 0:
+                    fair_prices.append(dcf_price)
+
+            fair_price = sum(fair_prices) / len(fair_prices) if fair_prices else None
+
+            # --- 구분선 ---
+            sep = ttk.Separator(indicator_frame, orient="horizontal")
+            sep.pack(fill=tk.X, padx=8, pady=4)
+
+            # --- Row 6: 종합 판단 + 적정가격 ---
+            row6 = tk.Frame(indicator_frame)
+            row6.pack(fill=tk.X, padx=8, pady=2)
+
+            JUDGMENT_TOOLTIP = (
+                "종합 판단 (점수제 밸류에이션)\n"
+                "7가지 핵심 기준으로 저평가/고평가를 판단합니다.\n"
+                "각 기준마다 저평가(+1), 고평가(-1), 중립(0)을 부여하고 합산합니다.\n\n"
+                "판단 기준:\n"
+                "  +3점 이상 → ★ 저평가 (매수 고려)\n"
+                "  -3점 이하 → ★ 고평가 (매도 고려)\n"
+                "  그 외 → 적정 (관망)\n\n"
+                "주의: 단순 수치 기반 판단이므로\n"
+                "업종 특성, 성장성, 시장 상황 등을\n"
+                "종합적으로 고려하여 참고용으로 활용하세요."
+            )
+
+            FAIR_PRICE_TOOLTIP = (
+                "적정 가격 (Fair Value Estimate)\n"
+                "3가지 밸류에이션 모델의 평균값입니다.\n\n"
+                "1) PER 기반: EPS × 업종평균PER\n"
+                "   업종 PER을 구할 수 없으면 시장 평균 15를 사용합니다.\n"
+                "   이익 기반으로 주가의 적정 수준을 추정합니다.\n\n"
+                "2) PBR 기반: 주당순자산(BPS) × 1.0\n"
+                "   회사의 청산가치를 기준으로 한 보수적 추정입니다.\n\n"
+                "3) 간이 DCF: EPS × (1+이익성장률)^5 × 15 ÷ 1.1^5\n"
+                "   향후 5년 이익 성장을 반영하고\n"
+                "   할인율 10%로 현재가치를 구합니다.\n\n"
+                "괴리율(%) = (적정가격 - 현재가) ÷ 현재가 × 100\n"
+                "양수면 현재가가 적정가보다 싸다는 의미입니다.\n\n"
+                "주의: 간이 추정치이므로 투자 판단의\n"
+                "절대적 근거가 아닌 참고 자료로 활용하세요."
+            )
+
+            # 개별 판정 기준 툴팁
+            CRITERIA_TOOLTIPS = {
+                "PER": "PER 판정 기준\n  ✓ 저평가: PER ≤ 15 (이익 대비 주가가 싸다)\n  ✗ 고평가: PER ≥ 30 (이익 대비 주가가 비싸다)\n  △ 중립: 15 ~ 30 사이",
+                "PBR": "PBR 판정 기준\n  ✓ 저평가: PBR ≤ 1.5 (순자산 대비 싸다)\n  ✗ 고평가: PBR ≥ 5.0 (순자산 대비 비싸다)\n  △ 중립: 1.5 ~ 5.0 사이",
+                "PEG": "PEG 판정 기준\n  ✓ 저평가: PEG ≤ 1.0 (성장성 대비 싸다)\n  ✗ 고평가: PEG ≥ 2.0 (성장성 대비 비싸다)\n  △ 중립: 1.0 ~ 2.0 사이",
+                "EV/EBITDA": "EV/EBITDA 판정 기준\n  ✓ 저평가: ≤ 10 (기업가치 대비 수익력 우수)\n  ✗ 고평가: ≥ 20 (기업가치 대비 수익력 부족)\n  △ 중립: 10 ~ 20 사이",
+                "ROE": "ROE 판정 기준\n  ✓ 저평가: ROE ≥ 15% (자기자본 활용 우수)\n  ✗ 고평가: ROE < 5% (자기자본 활용 부진)\n  △ 중립: 5% ~ 15% 사이",
+                "부채": "부채비율 판정 기준\n  ✓ 저평가: 부채비율 < 100% (재무 안정적)\n  ✗ 고평가: 부채비율 ≥ 200% (부채 부담 과다)\n  △ 중립: 100% ~ 200% 사이",
+                "52주": "52주 고점 대비 하락률 판정 기준\n  ✓ 저평가: 고점 대비 20% 이상 하락 (바겐세일 가능)\n  ✗ 고평가: 고점 대비 5% 이내 (이미 많이 올랐다)\n  △ 중립: 5% ~ 20% 하락 구간",
+            }
+
+            if total_criteria > 0:
+                if score >= 3:
+                    judgment = "저평가"
+                    j_color = "#008800"
+                elif score <= -3:
+                    judgment = "고평가"
+                    j_color = "#CC0000"
+                else:
+                    judgment = "적정"
+                    j_color = "#666666"
+                j_label = tk.Label(row6, text=f"종합 판단: ★ {judgment} (점수: {'+' if score > 0 else ''}{score}/{total_criteria})",
+                         font=("Arial", 10, "bold"), fg=j_color, cursor="question_arrow")
+                j_label.pack(side=tk.LEFT, padx=(0, 20))
+                HelpTooltip(j_label, JUDGMENT_TOOLTIP)
+            else:
+                tk.Label(row6, text="종합 판단: 데이터 부족",
+                         font=("Arial", 10, "bold"), fg="#999999").pack(side=tk.LEFT, padx=(0, 20))
+
+            if fair_price is not None and current_price is not None and current_price > 0:
+                gap = (fair_price - current_price) / current_price * 100
+                gap_sign = "+" if gap > 0 else ""
+                gap_color = "#008800" if gap > 0 else "#CC0000" if gap < -10 else "#666666"
+                fp_label = tk.Label(row6, text=f"적정가격: ${fair_price:.2f} (현재가 대비 {gap_sign}{gap:.1f}%)",
+                         font=("Arial", 10, "bold"), fg=gap_color, cursor="question_arrow")
+                fp_label.pack(side=tk.LEFT)
+                HelpTooltip(fp_label, FAIR_PRICE_TOOLTIP)
+            elif fair_price is not None:
+                fp_label = tk.Label(row6, text=f"적정가격: ${fair_price:.2f}",
+                         font=("Arial", 10, "bold"), fg="#666666", cursor="question_arrow")
+                fp_label.pack(side=tk.LEFT)
+                HelpTooltip(fp_label, FAIR_PRICE_TOOLTIP)
+
+            # --- Row 7: 개별 기준 판정 표시 ---
+            row7 = tk.Frame(indicator_frame)
+            row7.pack(fill=tk.X, padx=8, pady=(2, 4))
+            for name, val in criteria.items():
+                if val is None:
+                    sym = "-"
+                    color = "#999999"
+                elif val == 1:
+                    sym = "\u2713"  # ✓
+                    color = "#008800"
+                elif val == -1:
+                    sym = "\u2717"  # ✗
+                    color = "#CC0000"
+                else:
+                    sym = "\u25B3"  # △
+                    color = "#666666"
+                c_label = tk.Label(row7, text=f"{name}{sym}", font=("Arial", 9), fg=color, cursor="question_arrow")
+                c_label.pack(side=tk.LEFT, padx=(0, 10))
+                if name in CRITERIA_TOOLTIPS:
+                    HelpTooltip(c_label, CRITERIA_TOOLTIPS[name])
 
         try:
             popup.after(0, _update_ui)
@@ -1145,6 +1432,176 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
     search_btn = tk.Button(btn_frame, text="검색 및 분석", command=save_and_search)
     search_btn.pack(side=tk.LEFT, padx=5)
+
+    # ── 종목 뉴스 버튼 ──
+    def open_ticker_news_popup():
+        from news_panel import fetch_ticker_news
+
+        news_popup = tk.Toplevel(popup)
+        news_popup.title(f"{stock_display} 뉴스")
+        news_popup.geometry("620x500")
+        news_popup.transient(popup)
+
+        header_label = tk.Label(
+            news_popup, text=f"{ticker_symbol} 뉴스 | 현재가 로딩중...",
+            font=("Arial", 11, "bold"), pady=8
+        )
+        header_label.pack(fill=tk.X)
+
+        # 스크롤 영역
+        scroll_frame = tk.Frame(news_popup)
+        scroll_frame.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(scroll_frame, highlightthickness=0)
+        scrollbar = tk.Scrollbar(scroll_frame, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        _win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # inner 너비를 canvas에 맞추기 + 제목 wraplength 갱신
+        _title_labels = []
+
+        def _resize_inner(e):
+            canvas.itemconfig(_win_id, width=e.width)
+            wrap = max(100, e.width - 40)
+            for lbl in _title_labels:
+                try:
+                    lbl.config(wraplength=wrap)
+                except tk.TclError:
+                    pass
+        canvas.bind("<Configure>", _resize_inner)
+
+        # 마우스 휠 스크롤 — news_popup 전체에 바인딩
+        def _on_wheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            # 무한 스크롤: 바닥 도달 시 추가 로드
+            if canvas.yview()[1] >= 0.95 and news_state["has_more"] and not news_state["loading"]:
+                _load_more()
+
+        def _bind_wheel(e):
+            news_popup.bind_all("<MouseWheel>", _on_wheel)
+
+        def _unbind_wheel(e):
+            news_popup.unbind_all("<MouseWheel>")
+
+        news_popup.bind("<Enter>", _bind_wheel)
+        news_popup.bind("<Leave>", _unbind_wheel)
+        news_popup.bind("<Destroy>", lambda e: _unbind_wheel(e) if e.widget == news_popup else None)
+
+        loading_label = tk.Label(inner, text="뉴스를 불러오는 중...", font=("Arial", 10), fg="#444444", pady=20)
+        loading_label.pack(anchor="w", padx=10)
+
+        # 상태 표시 라벨 (하단)
+        status_frame = tk.Frame(news_popup)
+        status_frame.pack(fill=tk.X, pady=3)
+        status_label = tk.Label(status_frame, text="", font=("Arial", 8), fg="#888888")
+        status_label.pack(side=tk.LEFT, padx=10)
+        tk.Button(status_frame, text="닫기", command=news_popup.destroy).pack(side=tk.RIGHT, padx=10)
+
+        news_state = {"loaded_count": 0, "current_price": None, "loading": False, "has_more": True}
+
+        def _add_news_items(news_list, start_idx=0):
+            """뉴스 항목들을 inner 프레임 끝에 추가."""
+            canvas_w = canvas.winfo_width()
+            wrap = max(100, canvas_w - 40) if canvas_w > 1 else 560
+
+            for item in news_list[start_idx:]:
+                row = tk.Frame(inner)
+                row.pack(fill=tk.X, padx=6, pady=2)
+
+                # 제목 (클릭 → 브라우저)
+                url = item.get("url", "")
+                title_lbl = tk.Label(
+                    row, text=item["title"],
+                    font=("Arial", 10, "bold"), fg="#1A0DAB", anchor="w",
+                    cursor="hand2" if url else "", wraplength=wrap, justify=tk.LEFT
+                )
+                title_lbl.pack(fill=tk.X, anchor="w")
+                _title_labels.append(title_lbl)
+                if url:
+                    title_lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+
+                # 언론사 | 날짜
+                meta_parts = []
+                if item.get("publisher"):
+                    meta_parts.append(item["publisher"])
+                if item.get("time"):
+                    meta_parts.append(item["time"])
+                if meta_parts:
+                    tk.Label(row, text=" | ".join(meta_parts),
+                             font=("Arial", 8), fg="#666666", anchor="w").pack(anchor="w")
+
+                # 구분선
+                ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, padx=6, pady=2)
+
+        def _fetch_news(count):
+            news_state["loading"] = True
+            try:
+                status_label.config(text="불러오는 중...")
+            except tk.TclError:
+                return
+            news_list, current_price = fetch_ticker_news(ticker_symbol, count=count)
+            try:
+                news_popup.after(0, lambda: _populate(news_list, current_price, count))
+            except tk.TclError:
+                pass
+
+        def _populate(news_list, current_price, requested_count):
+            news_state["loading"] = False
+
+            # 헤더 업데이트
+            if current_price is not None:
+                news_state["current_price"] = current_price
+                header_label.config(text=f"{ticker_symbol} 뉴스 | 현재가: ${current_price:.2f}")
+            elif news_state["current_price"] is None:
+                header_label.config(text=f"{ticker_symbol} 뉴스")
+
+            prev_count = news_state["loaded_count"]
+
+            if not news_list:
+                if prev_count == 0:
+                    for w in inner.winfo_children():
+                        w.destroy()
+                    tk.Label(inner, text="뉴스가 없거나 불러올 수 없습니다.",
+                             font=("Arial", 10), fg="#444444", pady=20).pack(anchor="w", padx=10)
+                news_state["has_more"] = False
+                status_label.config(text=f"전체 {prev_count}건")
+                return
+
+            # 추가 로드인 경우: 새 항목만 추가
+            if prev_count > 0 and len(news_list) > prev_count:
+                _add_news_items(news_list, start_idx=prev_count)
+            elif prev_count == 0:
+                # 첫 로드: 로딩 텍스트 제거 후 전체 추가
+                for w in inner.winfo_children():
+                    w.destroy()
+                _add_news_items(news_list)
+
+            news_state["loaded_count"] = len(news_list)
+
+            if len(news_list) < requested_count:
+                news_state["has_more"] = False
+                status_label.config(text=f"전체 {len(news_list)}건")
+            else:
+                news_state["has_more"] = True
+                status_label.config(text=f"{len(news_list)}건 로드됨 — 스크롤하여 더 보기")
+
+            if prev_count == 0:
+                canvas.yview_moveto(0)
+
+        def _load_more():
+            if news_state["loading"] or not news_state["has_more"]:
+                return
+            new_count = news_state["loaded_count"] + 25
+            threading.Thread(target=_fetch_news, args=(new_count,), daemon=True).start()
+
+        threading.Thread(target=_fetch_news, args=(25,), daemon=True).start()
+
+    news_btn = tk.Button(btn_frame, text="종목 뉴스", command=open_ticker_news_popup)
+    news_btn.pack(side=tk.LEFT, padx=5)
 
     # ── 종목 추가/삭제 버튼 ──
     if app_state is not None:

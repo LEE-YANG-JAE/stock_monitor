@@ -113,7 +113,7 @@
     "backtest": {
         "period": 2,
         "unit": "y",
-        "method": "ma_cross"
+        "method": "momentum_signal"
     },
     "alert_enabled": true,
     "hint_shown": true
