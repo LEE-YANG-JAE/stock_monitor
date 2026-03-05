@@ -14,6 +14,14 @@ import pandas as pd
 import yfinance as yf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+from fundamental_score import safe_get_float, calculate_valuation_score, calculate_factor_score, calculate_piotroski_fscore
+
+try:
+    from tkcalendar import DateEntry as _DateEntry
+    _has_calendar = True
+except ImportError:
+    _has_calendar = False
+
 import config
 from help_texts import STRATEGY_HELP, BACKTEST_INPUT_HELP, CHART_HELP, RESULT_HELP
 from ui_components import Tooltip, HelpTooltip
@@ -87,10 +95,16 @@ def calculate_rsi_for_backtest(series, period=14):
     return rsi
 
 
+COMMISSION_RATE = 0.001  # 0.1% per trade (buy or sell)
+
+
 def _safe_division(exit_price, entry_price):
-    """Phase 3-6: Safe profit calculation avoiding division by zero."""
+    """Phase 3-6: Safe profit calculation avoiding division by zero.
+    Applies round-trip commission (buy + sell)."""
     if entry_price > 0:
-        return (exit_price - entry_price) / entry_price
+        raw_return = (exit_price - entry_price) / entry_price
+        # Deduct round-trip commission (buy + sell)
+        return raw_return - (COMMISSION_RATE * 2)
     return 0.0
 
 
@@ -161,28 +175,81 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             messagebox.showerror("오류", f"날짜 계산 오류: {e}")
 
     def save_and_search():
-        value_text = period_value_entry.get().strip()
-        if not value_text.isdigit():
-            messagebox.showerror("오류", "기간 숫자는 정수로 입력하세요.")
-            return
+        mode = bt_period_mode_var.get()
+        config.config["backtest"]["period_mode"] = mode
 
-        value = int(value_text)
-        # Phase 5-3: Range validation with message
-        if value < 1 or value > 9999:
-            messagebox.showerror("오류", "1~9999 범위의 숫자를 입력하세요.")
-            return
+        if mode == "absolute":
+            # 절대 날짜 모드
+            start_str = bt_start_date_entry.get().strip()
+            end_str = bt_end_date_entry.get().strip()
+            try:
+                datetime.strptime(start_str, '%Y-%m-%d')
+                datetime.strptime(end_str, '%Y-%m-%d')
+            except ValueError:
+                messagebox.showerror("오류", "날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)")
+                return
+            if start_str >= end_str:
+                messagebox.showerror("오류", "시작 날짜가 종료 날짜보다 이전이어야 합니다.")
+                return
+            config.config["backtest"]["start_date"] = start_str
+            config.config["backtest"]["end_date"] = end_str
+            value = None
+            unit = None
+        else:
+            # 상대 기간 모드
+            value_text = period_value_entry.get().strip()
+            if not value_text.isdigit():
+                messagebox.showerror("오류", "기간 숫자는 정수로 입력하세요.")
+                return
 
-        unit = _get_unit_key()
+            value = int(value_text)
+            if value < 1 or value > 9999:
+                messagebox.showerror("오류", "1~9999 범위의 숫자를 입력하세요.")
+                return
+
+            unit = _get_unit_key()
+            if unit not in ('d', 'mo', 'y'):
+                messagebox.showerror("오류", "기간 단위를 일, 개월, 년 중 하나로 선택하세요.")
+                return
+            config.config["backtest"]["period"] = value
+            config.config["backtest"]["unit"] = unit
+
         method = _get_method_key()
-
-        if unit not in ('d', 'mo', 'y'):
-            messagebox.showerror("오류", "기간 단위를 일, 개월, 년 중 하나로 선택하세요.")
-            return
-
-        config.config["backtest"]["period"] = value
-        config.config["backtest"]["unit"] = unit
         config.config["backtest"]["method"] = method
+        config.config["backtest"]["stoploss_enabled"] = stoploss_enabled_var.get()
+        try:
+            sl_pct = float(stoploss_pct_var.get())
+        except ValueError:
+            sl_pct = 5.0
+        config.config["backtest"]["stoploss_pct"] = sl_pct
+        config.config["backtest"]["regime_filter"] = regime_filter_var.get()
+
+        # 추적 손절 설정 저장
+        config.config["backtest"]["trailing_enabled"] = trailing_enabled_var.get()
+        config.config["backtest"]["trailing_type"] = trailing_type_var.get()
+        try:
+            config.config["backtest"]["trailing_param"] = float(trailing_param_var.get())
+        except ValueError:
+            pass
+
+        # 포지션 사이징 설정 저장
+        config.config["backtest"]["position_sizing"] = position_sizing_var.get()
+
+        # 워크포워드 설정 저장
+        config.config["backtest"]["walk_forward_enabled"] = walk_forward_var.get()
+
         config.save_config(config.get_config())
+
+        stoploss = sl_pct / 100.0 if stoploss_enabled_var.get() else None
+        use_regime = regime_filter_var.get()
+        trailing = None
+        if trailing_enabled_var.get():
+            try:
+                trailing = (trailing_type_var.get(), float(trailing_param_var.get()))
+            except ValueError:
+                trailing = None
+        pos_sizing = position_sizing_var.get()
+        use_walk_forward = walk_forward_var.get()
 
         # 분석 중 로딩 표시
         search_btn.config(state=tk.DISABLED)
@@ -201,7 +268,17 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
         def _run():
             try:
-                run_backtest(ticker_symbol, value, unit, method)
+                if mode == "absolute":
+                    start_str = bt_start_date_entry.get().strip()
+                    end_str = bt_end_date_entry.get().strip()
+                    run_backtest(ticker_symbol, None, None, method, stoploss, use_regime,
+                                 trailing=trailing, pos_sizing=pos_sizing,
+                                 use_walk_forward=use_walk_forward,
+                                 start_date=start_str, end_date=end_str)
+                else:
+                    run_backtest(ticker_symbol, value, unit, method, stoploss, use_regime,
+                                 trailing=trailing, pos_sizing=pos_sizing,
+                                 use_walk_forward=use_walk_forward)
             finally:
                 try:
                     popup.after(0, _finish)
@@ -299,6 +376,22 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         else:
             mdd_date = ""
 
+        # MDD 회복 기간 계산
+        mdd_recovery_text = ""
+        if mdd < 0 and mdd_idx > 0:
+            trough_val = equity.iloc[mdd_idx]
+            pre_peak_val = peak.iloc[mdd_idx]
+            # 트로프 이후 이전 피크값 회복까지의 거래 수
+            recovered = False
+            for ri in range(mdd_idx + 1, len(equity)):
+                if equity.iloc[ri] >= pre_peak_val:
+                    recovery_trades = ri - mdd_idx
+                    mdd_recovery_text = f"{recovery_trades}거래"
+                    recovered = True
+                    break
+            if not recovered:
+                mdd_recovery_text = "미회복"
+
         # 최대 수익 / 최대 손실 거래 + 날짜
         best_idx = profits.index(max(profits))
         worst_idx = profits.index(min(profits))
@@ -323,16 +416,82 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         best_date = _fmt_trade_date(best_idx, buy_dates, sell_dates)
         worst_date = _fmt_trade_date(worst_idx, buy_dates, sell_dates)
 
+        # 승률 / 손익비 / Profit Factor / 샤프비율 / 소르티노비율
+        profit_series = pd.Series(profits)
+        winning = profit_series[profit_series > 0]
+        losing = profit_series[profit_series < 0]
+        total_trades = len(profits)
+        win_count = len(winning)
+        win_rate = win_count / total_trades if total_trades > 0 else 0.0
+
+        avg_win = winning.mean() if len(winning) > 0 else 0.0
+        avg_loss = abs(losing.mean()) if len(losing) > 0 else 0.0
+        payoff_ratio = avg_win / avg_loss if avg_loss > 0 else float('inf')
+
+        total_gain = winning.sum() if len(winning) > 0 else 0.0
+        total_loss = abs(losing.sum()) if len(losing) > 0 else 0.0
+        profit_factor = total_gain / total_loss if total_loss > 0 else float('inf')
+
+        # 샤프비율 (연환산, 무위험수익률 4.5%)
+        risk_free_per_trade = 0.045 / 252  # 일일 무위험수익률 근사
+        if len(profits) >= 2 and profit_series.std() > 0:
+            excess_returns = profit_series - risk_free_per_trade
+            sharpe = excess_returns.mean() / profit_series.std() * np.sqrt(252)
+        else:
+            sharpe = 0.0
+
+        # 소르티노비율 (하방 변동성만 사용)
+        downside = profit_series[profit_series < 0]
+        if len(downside) >= 2 and downside.std() > 0:
+            sortino = (profit_series.mean() - risk_free_per_trade) / downside.std() * np.sqrt(252)
+        else:
+            sortino = 0.0
+
         summary_frame = tk.LabelFrame(result_container, text="백테스트 결과 요약", font=("Arial", 10, "bold"))
         summary_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        def _fmt_ratio(val):
+            if val == float('inf'):
+                return "∞"
+            return f"{val:.2f}"
+
+        # SPY 벤치마크 비교
+        spy_return_text = ""
+        alpha_text = ""
+        try:
+            if len(close_series) >= 2:
+                spy_start = close_series.index[0].strftime('%Y-%m-%d')
+                spy_end = close_series.index[-1].strftime('%Y-%m-%d')
+                spy_data = yf.download("SPY", start=spy_start, end=spy_end)
+                if isinstance(spy_data.columns, pd.MultiIndex):
+                    spy_data.columns = spy_data.columns.get_level_values(0)
+                if not spy_data.empty and len(spy_data) >= 2:
+                    spy_buy_hold = (spy_data['Close'].iloc[-1] / spy_data['Close'].iloc[0]) - 1
+                    spy_return_text = f"{spy_buy_hold:.2%}"
+                    alpha = total_return - spy_buy_hold
+                    alpha_text = f"{alpha:+.2%}"
+        except Exception as e:
+            logging.warning(f"[BENCHMARK] SPY comparison failed: {e}")
 
         rows = [
             ("총 수익률", f"{total_return:.2%}"),
             ("연환산 수익률", f"{annual_return:.2%}"),
             ("최대 낙폭 (MDD)", f"{mdd:.2%}  ({mdd_date})" if mdd_date else f"{mdd:.2%}"),
+            ("MDD 회복 기간", mdd_recovery_text if mdd_recovery_text else "N/A"),
             ("최대 수익 거래", f"{best_trade:.2%}  ({best_date})"),
             ("최대 손실 거래", f"{worst_trade:.2%}  ({worst_date})"),
+            ("거래 횟수", f"{total_trades}회"),
+            ("승률", f"{win_rate:.1%} ({win_count}/{total_trades})"),
+            ("평균 손익비", _fmt_ratio(payoff_ratio)),
+            ("Profit Factor", _fmt_ratio(profit_factor)),
+            ("샤프 비율", f"{sharpe:.2f}"),
+            ("소르티노 비율", f"{sortino:.2f}"),
+            ("수수료", f"거래당 {COMMISSION_RATE:.1%} (왕복 {COMMISSION_RATE*2:.1%})"),
         ]
+        if spy_return_text:
+            rows.append(("SPY 수익률 (Buy&Hold)", spy_return_text))
+        if alpha_text:
+            rows.append(("알파 (초과수익)", alpha_text))
         for label_text, value_text in rows:
             row_frame = tk.Frame(summary_frame)
             row_frame.pack(fill=tk.X, padx=8, pady=1)
@@ -350,6 +509,216 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             elif not value_text.startswith("0") and "0.00%" not in value_text:
                 fg = "#2E7D32"
             tk.Label(row_frame, text=value_text, font=("Arial", 10, "bold"), anchor="e", fg=fg).pack(side=tk.RIGHT)
+
+    def _show_holdings_comparison(profits, buy_dates, sell_dates, close_series):
+        """보유 종목이면 전략 vs 실제 보유 성과 비교 표시."""
+        if app_state is None:
+            return
+        try:
+            import holdings_manager
+            holdings = getattr(app_state, 'holdings', None)
+            if not holdings:
+                return
+            holding = holdings_manager.get_holding(holdings, ticker_symbol)
+            if not holding or holding["quantity"] <= 0:
+                return
+
+            h_avg = holding["avg_price"]
+            h_qty = holding["quantity"]
+            h_realized = holding["total_realized_pnl"]
+            transactions = holding.get("transactions", [])
+
+            # 가장 이른 매수일 찾기
+            first_buy_date = None
+            for tx in transactions:
+                if tx["type"] == "buy" and tx.get("date"):
+                    try:
+                        d = datetime.strptime(tx["date"], "%Y-%m-%d")
+                        if first_buy_date is None or d < first_buy_date:
+                            first_buy_date = d
+                    except ValueError:
+                        pass
+
+            if close_series.empty or len(close_series) < 2:
+                return
+
+            # 현재가 (close_series 마지막)
+            current_price = float(close_series.iloc[-1])
+
+            # 보유 성과 계산
+            total_invested = 0.0
+            for tx in transactions:
+                if tx["type"] == "buy":
+                    total_invested += tx["quantity"] * tx["price"]
+
+            unrealized_pnl = (current_price - h_avg) * h_qty
+            total_pnl = unrealized_pnl + h_realized
+            hold_return = total_pnl / total_invested if total_invested > 0 else 0
+
+            # 전략 수익률
+            strategy_return = (1 + pd.Series(profits)).prod() - 1 if profits else 0
+
+            # 비교 프레임
+            comp_frame = tk.LabelFrame(result_container, text="★ 보유 vs 전략 비교",
+                                        font=("Arial", 10, "bold"), fg="#1A5276")
+            comp_frame.pack(fill=tk.X, padx=10, pady=5)
+
+            # 보유 정보 요약
+            hold_sign = "+" if hold_return >= 0 else ""
+            hold_color = "#2E7D32" if hold_return >= 0 else "#E74C3C"
+            strat_sign = "+" if strategy_return >= 0 else ""
+            strat_color = "#2E7D32" if strategy_return >= 0 else "#E74C3C"
+
+            diff = strategy_return - hold_return
+            diff_sign = "+" if diff >= 0 else ""
+            diff_color = "#2E7D32" if diff >= 0 else "#E74C3C"
+
+            comp_rows = [
+                ("보유 수익률 (Buy&Hold)", f"{hold_sign}{hold_return:.2%}", hold_color),
+                ("  투자금", f"${total_invested:,.0f}", "#000"),
+                ("  미실현 손익", f"{'+'if unrealized_pnl>=0 else ''}${unrealized_pnl:,.0f}", hold_color),
+                ("  실현 손익", f"{'+'if h_realized>=0 else ''}${h_realized:,.0f}",
+                 "#2E7D32" if h_realized >= 0 else "#E74C3C"),
+                ("전략 수익률", f"{strat_sign}{strategy_return:.2%}", strat_color),
+                ("전략 - 보유 차이", f"{diff_sign}{diff:.2%}", diff_color),
+            ]
+
+            for label_text, value_text, fg in comp_rows:
+                row_frame = tk.Frame(comp_frame)
+                row_frame.pack(fill=tk.X, padx=8, pady=1)
+                tk.Label(row_frame, text=label_text, font=("Arial", 10), anchor="w", width=20).pack(side=tk.LEFT)
+                tk.Label(row_frame, text=value_text, font=("Arial", 10, "bold"), anchor="e", fg=fg).pack(side=tk.RIGHT)
+
+            # 판정
+            if diff > 0.01:
+                verdict = "전략이 보유보다 유리합니다"
+                verdict_color = "#2E7D32"
+            elif diff < -0.01:
+                verdict = "보유(Buy&Hold)가 전략보다 유리합니다"
+                verdict_color = "#E74C3C"
+            else:
+                verdict = "전략과 보유 성과가 비슷합니다"
+                verdict_color = "#666"
+
+            tk.Label(comp_frame, text=f"→ {verdict}", font=("Arial", 10, "bold"),
+                     fg=verdict_color).pack(padx=8, pady=(3, 5), anchor="w")
+
+            # 누적 수익률 비교 차트
+            if first_buy_date and len(close_series) >= 2:
+                # 전략 에쿼티 커브
+                strategy_equity = [1.0]
+                for p in profits:
+                    strategy_equity.append(strategy_equity[-1] * (1 + p))
+
+                # 보유 에쿼티 커브: close_series 기준 (매수일 이후)
+                buy_date_ts = pd.Timestamp(first_buy_date)
+                hold_series = close_series[close_series.index >= buy_date_ts]
+                if len(hold_series) >= 2:
+                    hold_equity = hold_series / hold_series.iloc[0]
+
+                    fig, ax = plt.subplots(figsize=(8, 4))
+                    # 전략 커브 (거래 시점 기준이라 x축을 sell_dates로 매핑)
+                    strat_dates = [close_series.index[0]]
+                    for sd in sell_dates:
+                        strat_dates.append(pd.Timestamp(sd))
+                    if len(strat_dates) == len(strategy_equity):
+                        ax.plot(strat_dates, strategy_equity, label=f"전략 ({strategy_return:.1%})",
+                                color="#4A90D9", linewidth=2)
+                    # 보유 커브
+                    ax.plot(hold_equity.index, hold_equity.values,
+                            label=f"보유 ({hold_return:.1%})",
+                            color="#E67E22", linewidth=2, linestyle="--")
+                    ax.axhline(y=1.0, color="gray", linewidth=0.5, linestyle=":")
+                    ax.set_title(f"{ticker_symbol} 전략 vs 보유 성과 비교", fontsize=12, fontweight="bold")
+                    ax.set_ylabel("누적 수익률")
+                    ax.legend(fontsize=9)
+                    ax.grid(alpha=0.3)
+                    plt.tight_layout()
+
+                    _create_graph_popup(fig, f"{ticker_symbol} 전략 vs 보유 비교",
+                                        "파란선: 전략 매매 수익 | 주황 점선: 보유(Buy&Hold) 수익")
+
+        except Exception as e:
+            logging.warning(f"[BACKTEST] Holdings comparison error: {e}")
+
+    def _show_monte_carlo(profits, close_series):
+        """몬테카를로 시뮬레이션 — 거래 수익률을 부트스트랩하여 전략 신뢰구간 추정."""
+        if not profits or len(profits) < 3:
+            return
+
+        n_simulations = 1000
+        n_trades = len(profits)
+        profits_arr = np.array(profits)
+
+        # 부트스트랩: 거래 수익률을 복원추출하여 N번 시뮬레이션
+        sim_returns = np.zeros(n_simulations)
+        sim_mdds = np.zeros(n_simulations)
+        for i in range(n_simulations):
+            sampled = np.random.choice(profits_arr, size=n_trades, replace=True)
+            # 누적 수익률
+            equity = np.cumprod(1 + sampled)
+            sim_returns[i] = equity[-1] - 1
+            # MDD
+            peak = np.maximum.accumulate(equity)
+            dd = (equity - peak) / peak
+            sim_mdds[i] = dd.min()
+
+        # 통계 계산
+        mean_return = np.mean(sim_returns)
+        median_return = np.median(sim_returns)
+        ci_5 = np.percentile(sim_returns, 5)
+        ci_25 = np.percentile(sim_returns, 25)
+        ci_75 = np.percentile(sim_returns, 75)
+        ci_95 = np.percentile(sim_returns, 95)
+        prob_loss = np.mean(sim_returns < 0) * 100
+        avg_mdd = np.mean(sim_mdds)
+
+        # 결과 프레임
+        mc_frame = tk.LabelFrame(result_container, text="몬테카를로 시뮬레이션 (1,000회)",
+                                  font=("Arial", 10, "bold"))
+        mc_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        mc_rows = [
+            ("평균 수익률", f"{mean_return:.2%}"),
+            ("중앙값 수익률", f"{median_return:.2%}"),
+            ("90% 신뢰구간", f"{ci_5:.2%} ~ {ci_95:.2%}"),
+            ("50% 신뢰구간", f"{ci_25:.2%} ~ {ci_75:.2%}"),
+            ("손실 확률", f"{prob_loss:.1f}%"),
+            ("평균 MDD", f"{avg_mdd:.2%}"),
+        ]
+        for label_text, value_text in mc_rows:
+            row_frame = tk.Frame(mc_frame)
+            row_frame.pack(fill=tk.X, padx=8, pady=1)
+            tk.Label(row_frame, text=label_text, font=("Arial", 9), anchor="w", width=16).pack(side=tk.LEFT)
+            fg = "#E74C3C" if "손실" in label_text or "MDD" in label_text else "#000"
+            tk.Label(row_frame, text=value_text, font=("Arial", 9, "bold"), anchor="e", fg=fg).pack(side=tk.RIGHT)
+
+        # 분포 차트
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+        # 수익률 분포
+        ax1.hist(sim_returns * 100, bins=50, color="#4A90D9", alpha=0.7, edgecolor="white")
+        ax1.axvline(x=0, color="#E74C3C", linewidth=1.5, linestyle="--", label="손익분기")
+        ax1.axvline(x=mean_return * 100, color="#2E7D32", linewidth=1.5, label=f"평균 {mean_return:.1%}")
+        actual_return = (1 + pd.Series(profits)).prod() - 1
+        ax1.axvline(x=actual_return * 100, color="#E67E22", linewidth=2, label=f"실제 {actual_return:.1%}")
+        ax1.set_title("수익률 분포 (MC)", fontsize=11, fontweight="bold")
+        ax1.set_xlabel("수익률 (%)")
+        ax1.set_ylabel("빈도")
+        ax1.legend(fontsize=8)
+
+        # MDD 분포
+        ax2.hist(sim_mdds * 100, bins=50, color="#E74C3C", alpha=0.7, edgecolor="white")
+        ax2.axvline(x=avg_mdd * 100, color="#000", linewidth=1.5, label=f"평균 MDD {avg_mdd:.1%}")
+        ax2.set_title("MDD 분포 (MC)", fontsize=11, fontweight="bold")
+        ax2.set_xlabel("MDD (%)")
+        ax2.set_ylabel("빈도")
+        ax2.legend(fontsize=8)
+
+        plt.tight_layout()
+        _create_graph_popup(fig, f"{ticker_symbol} 몬테카를로 시뮬레이션",
+                            "거래 수익률을 1,000회 무작위 재추출하여 전략의 통계적 신뢰도를 평가합니다.\n"
+                            "주황선=실제 결과, 녹색선=시뮬레이션 평균, 빨간 점선=손익분기")
 
     def _save_trades_csv(buy_dates, sell_dates, profits):
         """Phase 12-1: Export trade history as CSV."""
@@ -929,20 +1298,329 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         "momentum_return_ma": _run_momentum_return_ma,
     }
 
-    def run_backtest(ticker_sym, value, unit, method):
-        now = datetime.now()
-        if unit == 'd':
-            start = now - timedelta(days=value)
-        elif unit == 'mo':
-            start = now - timedelta(days=value * 30)
-        elif unit == 'y':
-            start = now - timedelta(days=value * 365)
+    def _apply_stoploss(data, buy_dates, sell_dates, profits, stoploss_pct):
+        """기존 전략 결과에 손절 로직을 후처리로 적용합니다."""
+        if stoploss_pct is None or not buy_dates:
+            return buy_dates, sell_dates, profits
+
+        close = data['Close']
+        new_buy_dates = []
+        new_sell_dates = []
+        new_profits = []
+
+        for i, bd in enumerate(buy_dates):
+            if bd not in close.index:
+                continue
+            entry_price = close.loc[bd]
+            stoploss_price = entry_price * (1 - stoploss_pct)
+
+            # 해당 매수일 이후 데이터
+            if i < len(sell_dates):
+                sd = sell_dates[i]
+                # 매수~매도 사이에서 손절가 도달 여부 확인
+                mask = (close.index > bd) & (close.index <= sd)
+                segment = close[mask]
+                hit = segment[segment <= stoploss_price]
+                if not hit.empty:
+                    # 손절가에 먼저 도달
+                    sl_date = hit.index[0]
+                    sl_price = close.loc[sl_date]
+                    new_buy_dates.append(bd)
+                    new_sell_dates.append(sl_date)
+                    new_profits.append(_safe_division(sl_price, entry_price))
+                else:
+                    # 손절 안 됨 → 원래 매도 유지
+                    new_buy_dates.append(bd)
+                    new_sell_dates.append(sd)
+                    new_profits.append(profits[i] if i < len(profits) else 0.0)
+            else:
+                # 아직 매도 안 된 마지막 포지션
+                mask = close.index > bd
+                segment = close[mask]
+                hit = segment[segment <= stoploss_price]
+                if not hit.empty:
+                    sl_date = hit.index[0]
+                    sl_price = close.loc[sl_date]
+                    new_buy_dates.append(bd)
+                    new_sell_dates.append(sl_date)
+                    new_profits.append(_safe_division(sl_price, entry_price))
+                else:
+                    new_buy_dates.append(bd)
+                    if i < len(profits):
+                        new_profits.append(profits[i])
+
+        return new_buy_dates, new_sell_dates, new_profits
+
+    def _apply_trailing_stop(data, buy_dates, sell_dates, profits, trail_type, trail_param):
+        """추적 손절 후처리.
+        trail_type: 'pct' (퍼센트) 또는 'atr' (ATR 기반)
+        trail_param: 퍼센트 값 또는 ATR 배수
+        """
+        if not buy_dates:
+            return buy_dates, sell_dates, profits
+
+        close = data['Close']
+
+        # ATR 계산 (ATR 방식일 때)
+        atr_series = None
+        if trail_type == 'atr':
+            from stock_score import calculate_atr
+            atr_series = calculate_atr(data, period=14)
+
+        new_buy_dates = []
+        new_sell_dates = []
+        new_profits = []
+
+        for i, bd in enumerate(buy_dates):
+            if bd not in close.index:
+                continue
+            entry_price = close.loc[bd]
+
+            # 매도일 결정 (기존 매도일까지 또는 데이터 끝)
+            if i < len(sell_dates):
+                end_date = sell_dates[i]
+                mask = (close.index >= bd) & (close.index <= end_date)
+            else:
+                mask = close.index >= bd
+            segment = close[mask]
+
+            if segment.empty:
+                continue
+
+            # 추적 손절 시뮬레이션
+            peak_price = entry_price
+            trail_exit = False
+
+            for j in range(1, len(segment)):
+                current = segment.iloc[j]
+                if current > peak_price:
+                    peak_price = current
+
+                if trail_type == 'pct':
+                    stop_price = peak_price * (1 - trail_param / 100.0)
+                elif trail_type == 'atr' and atr_series is not None:
+                    idx = segment.index[j]
+                    if idx in atr_series.index and not pd.isna(atr_series.loc[idx]):
+                        stop_price = peak_price - (atr_series.loc[idx] * trail_param)
+                    else:
+                        continue
+                else:
+                    continue
+
+                if current <= stop_price:
+                    # 추적 손절 발동
+                    new_buy_dates.append(bd)
+                    new_sell_dates.append(segment.index[j])
+                    new_profits.append(_safe_division(current, entry_price))
+                    trail_exit = True
+                    break
+
+            if not trail_exit:
+                # 추적 손절 미발동 → 원래 매도 유지
+                new_buy_dates.append(bd)
+                if i < len(sell_dates):
+                    new_sell_dates.append(sell_dates[i])
+                    new_profits.append(profits[i] if i < len(profits) else 0.0)
+                elif i < len(profits):
+                    new_profits.append(profits[i])
+
+        return new_buy_dates, new_sell_dates, new_profits
+
+    def _calculate_position_sizes(profits, data, method='full', risk_pct=2.0, atr_mult=2.0):
+        """포지션 사이즈 계산.
+        method: 'full' (100%), 'kelly' (켈리 공식), 'atr' (ATR 기반), 'fixed' (고정 비율)
+        Returns: 포지션 사이즈 리스트 (0~1 범위)
+        """
+        n = len(profits)
+        if method == 'full':
+            return [1.0] * n
+
+        if method == 'kelly':
+            # 켈리 공식: f* = (W*R - L) / R
+            # W = 승률, R = 평균수익/평균손실, L = 패률
+            p_series = pd.Series(profits)
+            wins = p_series[p_series > 0]
+            losses = p_series[p_series < 0]
+            if len(wins) == 0 or len(losses) == 0:
+                return [1.0] * n
+            win_rate = len(wins) / len(p_series)
+            avg_win = wins.mean()
+            avg_loss = abs(losses.mean())
+            if avg_loss == 0:
+                return [1.0] * n
+            ratio = avg_win / avg_loss
+            kelly = win_rate - (1 - win_rate) / ratio
+            kelly = max(0.05, min(1.0, kelly))  # 5%~100% 범위 제한
+            return [kelly] * n
+
+        if method == 'atr':
+            from stock_score import calculate_atr
+            atr = calculate_atr(data, period=14)
+            sizes = []
+            close = data['Close']
+            for i in range(n):
+                try:
+                    last_atr = atr.iloc[-1]
+                    last_close = close.iloc[-1]
+                    if last_atr > 0 and last_close > 0:
+                        risk_amount = last_close * (risk_pct / 100.0)
+                        size = risk_amount / (last_atr * atr_mult)
+                        sizes.append(max(0.05, min(1.0, size)))
+                    else:
+                        sizes.append(1.0)
+                except Exception:
+                    sizes.append(1.0)
+            return sizes
+
+        if method == 'fixed':
+            fixed_size = risk_pct / 100.0
+            return [max(0.05, min(1.0, fixed_size))] * n
+
+        return [1.0] * n
+
+    def _compute_regime_mask(start_str, end_str):
+        """SPY 기반 시장 레짐 마스크를 계산. True=상승장/횡보, False=하락장."""
+        try:
+            spy = yf.download("SPY", start=start_str, end=end_str)
+            if isinstance(spy.columns, pd.MultiIndex):
+                spy.columns = spy.columns.get_level_values(0)
+            if spy.empty:
+                return None
+            ma20 = spy['Close'].rolling(20).mean()
+            ma60 = spy['Close'].rolling(60).mean()
+            # True = 상승/횡보(매수 허용), False = 하락(매수 억제)
+            regime = ma20 >= ma60 * 0.99
+            return regime
+        except Exception as e:
+            logging.warning(f"[REGIME] SPY 데이터 실패: {e}")
+            return None
+
+    def _apply_regime_filter(data, buy_dates, sell_dates, profits, regime_mask):
+        """하락장 구간의 매수 시그널을 제거."""
+        if regime_mask is None:
+            return buy_dates, sell_dates, profits
+
+        new_buy = []
+        new_sell = []
+        new_profits = []
+        for i, bd in enumerate(buy_dates):
+            # 매수일이 레짐 마스크에서 상승/횡보인 경우만 유지
+            try:
+                nearest = regime_mask.index.get_indexer([bd], method='nearest')[0]
+                if nearest >= 0 and nearest < len(regime_mask) and regime_mask.iloc[nearest]:
+                    new_buy.append(bd)
+                    if i < len(sell_dates):
+                        new_sell.append(sell_dates[i])
+                    if i < len(profits):
+                        new_profits.append(profits[i])
+            except Exception:
+                new_buy.append(bd)
+                if i < len(sell_dates):
+                    new_sell.append(sell_dates[i])
+                if i < len(profits):
+                    new_profits.append(profits[i])
+
+        return new_buy, new_sell, new_profits
+
+    def _run_walk_forward(data, close_prices, method, stoploss, trailing, pos_sizing,
+                          train_ratio=0.7):
+        """워크포워드 테스트: 데이터를 70/30으로 분할하여 인샘플/아웃오브샘플 성과 비교."""
+        total_len = len(data)
+        split_idx = int(total_len * train_ratio)
+        split_date = data.index[split_idx]
+
+        # 전체 데이터에 대해 전략 실행
+        handler = strategy_dispatch.get(method)
+        if not handler:
+            return
+
+        buy_dates, sell_dates, profits = handler(data, close_prices)
+
+        # 후처리 적용
+        if stoploss is not None and profits:
+            buy_dates, sell_dates, profits = _apply_stoploss(
+                data, buy_dates, sell_dates, profits, stoploss)
+        if trailing is not None and profits:
+            buy_dates, sell_dates, profits = _apply_trailing_stop(
+                data, buy_dates, sell_dates, profits, trailing[0], trailing[1])
+
+        if not profits:
+            messagebox.showinfo("알림", "워크포워드: 거래가 발생하지 않았습니다.")
+            return
+
+        # 분할: 매수일 기준으로 인샘플/아웃오브샘플 분리
+        in_buy, in_sell, in_profits = [], [], []
+        out_buy, out_sell, out_profits = [], [], []
+
+        for i, bd in enumerate(buy_dates):
+            if bd < split_date:
+                in_buy.append(bd)
+                if i < len(sell_dates):
+                    in_sell.append(sell_dates[i])
+                if i < len(profits):
+                    in_profits.append(profits[i])
+            else:
+                out_buy.append(bd)
+                if i < len(sell_dates):
+                    out_sell.append(sell_dates[i])
+                if i < len(profits):
+                    out_profits.append(profits[i])
+
+        # 워크포워드 결과 표시
+        wf_frame = tk.LabelFrame(result_container, text="워크포워드 분석", font=("Arial", 10, "bold"))
+        wf_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        def _wf_stats(profs, label):
+            if not profs:
+                return f"  {label}: 거래 없음"
+            p_series = pd.Series(profs)
+            total_ret = (1 + p_series).prod() - 1
+            wins = p_series[p_series > 0]
+            win_rate = len(wins) / len(p_series) if len(p_series) > 0 else 0
+            if len(p_series) >= 2 and p_series.std() > 0:
+                sharpe_val = p_series.mean() / p_series.std() * np.sqrt(252)
+            else:
+                sharpe_val = 0
+            return (f"  {label}: 수익률 {total_ret:.2%} | "
+                    f"거래 {len(profs)}회 | 승률 {win_rate:.1%} | 샤프 {sharpe_val:.2f}")
+
+        in_text = _wf_stats(in_profits, f"인샘플 (~{split_date.strftime('%Y-%m-%d')})")
+        out_text = _wf_stats(out_profits, f"아웃오브샘플 ({split_date.strftime('%Y-%m-%d')}~)")
+
+        tk.Label(wf_frame, text=in_text, font=("Arial", 9), anchor="w").pack(fill=tk.X, padx=8, pady=1)
+        tk.Label(wf_frame, text=out_text, font=("Arial", 9), anchor="w").pack(fill=tk.X, padx=8, pady=1)
+
+        # 차트에 분할 경계선 표시
+        split_label = tk.Label(wf_frame,
+                               text=f"분할 기준일: {split_date.strftime('%Y-%m-%d')} (학습 {train_ratio:.0%} / 검증 {1-train_ratio:.0%})",
+                               font=("Arial", 9, "bold"), fg="#8B5CF6")
+        split_label.pack(padx=8, pady=2)
+
+        return buy_dates, sell_dates, profits
+
+    def run_backtest(ticker_sym, value, unit, method, stoploss=None, use_regime=False,
+                     trailing=None, pos_sizing='full', use_walk_forward=False,
+                     start_date=None, end_date=None):
+        if start_date and end_date:
+            # 절대 날짜 모드
+            start_str = start_date
+            end_str = end_date
         else:
-            start = now
+            now = datetime.now()
+            if unit == 'd':
+                start = now - timedelta(days=value)
+            elif unit == 'mo':
+                start = now - timedelta(days=value * 30)
+            elif unit == 'y':
+                start = now - timedelta(days=value * 365)
+            else:
+                start = now
+            start_str = start.strftime('%Y-%m-%d')
+            end_str = now.strftime('%Y-%m-%d')
 
         # Phase 3-5: Exception handling for yf.download
         try:
-            data = _retry_download(ticker_sym, start.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d'))
+            data = _retry_download(ticker_sym, start_str, end_str)
         except (ConnectionError, TimeoutError, OSError) as e:
             messagebox.showerror("네트워크 오류",
                                  f"데이터를 가져올 수 없습니다.\n네트워크 연결을 확인하세요.\n\n{e}")
@@ -969,13 +1647,72 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
         close_prices = data['Close']
 
+        # 레짐 필터 마스크 사전 계산
+        regime_mask = None
+        if use_regime:
+            regime_mask = _compute_regime_mask(start_str, end_str)
+
         # Phase 8-1: Dispatch
         _clear_result_area()
+
+        # 워크포워드 모드
+        if use_walk_forward:
+            train_ratio = config.config["backtest"].get("walk_forward_train_ratio", 0.7)
+            result = _run_walk_forward(data, close_prices, method, stoploss, trailing,
+                                       pos_sizing, train_ratio)
+            if result:
+                buy_dates, sell_dates, profits = result
+                if profits:
+                    _show_result_summary(profits, buy_dates, sell_dates, close_prices)
+            return
+
         handler = strategy_dispatch.get(method)
         if handler:
             buy_dates, sell_dates, profits = handler(data, close_prices)
+            # 레짐 필터 적용
+            if use_regime and profits:
+                buy_dates, sell_dates, profits = _apply_regime_filter(
+                    data, buy_dates, sell_dates, profits, regime_mask)
+            # 손절 후처리 적용
+            if stoploss is not None and profits:
+                buy_dates, sell_dates, profits = _apply_stoploss(
+                    data, buy_dates, sell_dates, profits, stoploss)
+            # 추적 손절 적용
+            if trailing is not None and profits:
+                buy_dates, sell_dates, profits = _apply_trailing_stop(
+                    data, buy_dates, sell_dates, profits, trailing[0], trailing[1])
+            # 포지션 사이징 적용
+            if pos_sizing != 'full' and profits:
+                risk_pct = config.config["backtest"].get("risk_per_trade", 2.0)
+                atr_mult = config.config["backtest"].get("atr_sizing_multiplier", 2.0)
+                sizes = _calculate_position_sizes(profits, data, method=pos_sizing,
+                                                   risk_pct=risk_pct, atr_mult=atr_mult)
+                # 에쿼티 커브에 포지션 사이즈 반영하여 profits 재계산
+                adjusted_profits = [p * s for p, s in zip(profits, sizes)]
+                profits = adjusted_profits
             if profits:
                 _show_result_summary(profits, buy_dates, sell_dates, close_prices)
+                # 적용된 필터 표시
+                filter_texts = []
+                if stoploss is not None:
+                    filter_texts.append(f"손절: -{stoploss*100:.1f}%")
+                if trailing is not None:
+                    t_type = "%" if trailing[0] == 'pct' else "ATR"
+                    filter_texts.append(f"추적손절: {trailing[1]}{t_type}")
+                if use_regime:
+                    filter_texts.append("레짐 필터 (SPY)")
+                if pos_sizing != 'full':
+                    sizing_names = {'kelly': '켈리', 'atr': 'ATR', 'fixed': '고정비율'}
+                    filter_texts.append(f"포지션: {sizing_names.get(pos_sizing, pos_sizing)}")
+                if filter_texts:
+                    filter_label = tk.Label(result_container,
+                                            text="적용: " + " | ".join(filter_texts),
+                                            font=("Arial", 9, "bold"), fg="#4A90D9")
+                    filter_label.pack(padx=10, anchor="w")
+                # 보유 종목이면 보유 vs 전략 비교 표시
+                _show_holdings_comparison(profits, buy_dates, sell_dates, close_prices)
+                # 몬테카를로 시뮬레이션
+                _show_monte_carlo(profits, close_prices)
         else:
             messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
 
@@ -985,28 +1722,58 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     # Phase 9-5: Responsive size
     sw = popup.winfo_screenwidth()
     sh = popup.winfo_screenheight()
-    pw = min(500, int(sw * 0.35))
-    ph = min(450, int(sh * 0.45))
+    pw = min(560, int(sw * 0.4))
+    ph = min(700, int(sh * 0.7))
     popup.geometry(f"{pw}x{ph}")
-    popup.minsize(400, 350)
+    popup.minsize(400, 450)
+
+    # Phase 4-1: Cleanup figures on close
+    popup.protocol("WM_DELETE_WINDOW", lambda: (cleanup_figures(), popup.destroy()))
+
+    # ── 스크롤 가능한 메인 컨테이너 ──
+    _scroll_outer = tk.Frame(popup)
+    _scroll_outer.pack(fill=tk.BOTH, expand=True)
+
+    _scroll_canvas = tk.Canvas(_scroll_outer, highlightthickness=0)
+    _scroll_vsb = ttk.Scrollbar(_scroll_outer, orient="vertical", command=_scroll_canvas.yview)
+    _scroll_inner = tk.Frame(_scroll_canvas)
+
+    _scroll_inner.bind("<Configure>", lambda e: _scroll_canvas.configure(scrollregion=_scroll_canvas.bbox("all")))
+    _scroll_canvas.create_window((0, 0), window=_scroll_inner, anchor="nw")
+    _scroll_canvas.configure(yscrollcommand=_scroll_vsb.set)
+
+    _scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    _scroll_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # 캔버스 너비에 맞게 inner 프레임 리사이즈
+    def _on_canvas_configure(e):
+        _scroll_canvas.itemconfig(_scroll_canvas.find_withtag("all")[0], width=e.width)
+    _scroll_canvas.bind("<Configure>", _on_canvas_configure)
+
+    # 마우스 휠 스크롤 (bind_all 대신 개별 위젯 바인딩으로 충돌 방지)
+    def _on_popup_wheel(e):
+        _scroll_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+    def _bind_popup_wheel(e):
+        popup.bind_all("<MouseWheel>", _on_popup_wheel)
+
+    def _unbind_popup_wheel(e):
+        popup.unbind_all("<MouseWheel>")
+
+    _scroll_canvas.bind("<Enter>", _bind_popup_wheel)
+    _scroll_canvas.bind("<Leave>", _unbind_popup_wheel)
+    popup.bind("<Destroy>", lambda e: _unbind_popup_wheel(e) if e.widget == popup else None)
 
     # 결과 표시 전용 프레임 (매 실행 시 내용 교체)
-    result_container = tk.Frame(popup)
+    result_container = tk.Frame(_scroll_inner)
     result_container.pack(fill=tk.X, side=tk.BOTTOM)
 
     def _clear_result_area():
         for widget in result_container.winfo_children():
             widget.destroy()
 
-    # Phase 4-1: Cleanup figures on close
-    popup.protocol("WM_DELETE_WINDOW", lambda: (cleanup_figures(), popup.destroy()))
-
-    # 팝업 높이 확장 (지표 섹션 추가)
-    popup.geometry(f"{pw}x{max(ph, 550)}")
-    popup.minsize(400, 450)
-
     # ── 핵심 지표 섹션 ──
-    indicator_frame = tk.LabelFrame(popup, text="핵심 지표", font=("Arial", 10, "bold"))
+    indicator_frame = tk.LabelFrame(_scroll_inner, text="핵심 지표", font=("Arial", 10, "bold"))
     indicator_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
     indicator_loading = tk.Label(indicator_frame, text="지표 불러오는 중...", font=("Arial", 9), fg="#444444")
     indicator_loading.pack(pady=5)
@@ -1044,28 +1811,22 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                     return f"${val/1e6:.0f}M"
                 return f"${val:,.0f}"
 
-            def _safe_get(key):
-                v = info.get(key)
-                if v is None:
-                    return None
-                try:
-                    return float(v)
-                except (ValueError, TypeError):
-                    return None
+            # 공유 모듈에서 밸류에이션 계산
+            fund = calculate_valuation_score(info)
 
-            per = _safe_get("trailingPE")
-            fwd_per = _safe_get("forwardPE")
-            pbr = _safe_get("priceToBook")
-            peg = _safe_get("pegRatio")
-            eps_val = _safe_get("trailingEps")
-            div_val = _safe_get("dividendYield")
-            roe_val = _safe_get("returnOnEquity")
-            om_val = _safe_get("operatingMargins")
-            ev_ebitda = _safe_get("enterpriseToEbitda")
-            debt_equity = _safe_get("debtToEquity")
-            current_ratio = _safe_get("currentRatio")
-            rev_growth = _safe_get("revenueGrowth")
-            earn_growth = _safe_get("earningsGrowth")
+            per = safe_get_float(info, "trailingPE")
+            fwd_per = safe_get_float(info, "forwardPE")
+            pbr = safe_get_float(info, "priceToBook")
+            peg = safe_get_float(info, "pegRatio")
+            eps_val = safe_get_float(info, "trailingEps")
+            div_val = safe_get_float(info, "dividendYield")
+            roe_val = safe_get_float(info, "returnOnEquity")
+            om_val = safe_get_float(info, "operatingMargins")
+            ev_ebitda = safe_get_float(info, "enterpriseToEbitda")
+            debt_equity = safe_get_float(info, "debtToEquity")
+            current_ratio = safe_get_float(info, "currentRatio")
+            rev_growth = safe_get_float(info, "revenueGrowth")
+            earn_growth = safe_get_float(info, "earningsGrowth")
 
             # PEG 직접 계산 fallback: PER ÷ (이익성장률 × 100)
             peg_calculated = False
@@ -1074,11 +1835,11 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                 if eg_pct > 0:
                     peg = per / eg_pct
                     peg_calculated = True
-            fcf = _safe_get("freeCashflow")
-            current_price = _safe_get("currentPrice")
-            hi = _safe_get("fiftyTwoWeekHigh")
-            lo = _safe_get("fiftyTwoWeekLow")
-            book_val = _safe_get("bookValue")
+            fcf = safe_get_float(info, "freeCashflow")
+            current_price = safe_get_float(info, "currentPrice")
+            hi = safe_get_float(info, "fiftyTwoWeekHigh")
+            lo = safe_get_float(info, "fiftyTwoWeekLow")
+            book_val = safe_get_float(info, "bookValue")
 
             # 지표별 툴팁 설명
             INDICATOR_TOOLTIPS = {
@@ -1165,106 +1926,11 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             _make_indicator_label(row5, "52주", f"{lo_s} ~ {hi_s}")
             _make_indicator_label(row5, "현재가", price_s)
 
-            # --- 저평가/고평가 판단 (점수제) ---
-            score = 0
-            criteria = {}  # name -> +1(저평가), -1(고평가), 0(중립)
-
-            if per is not None:
-                if per <= 15:
-                    criteria["PER"] = 1
-                elif per >= 30:
-                    criteria["PER"] = -1
-                else:
-                    criteria["PER"] = 0
-            else:
-                criteria["PER"] = None
-
-            if pbr is not None:
-                if pbr <= 1.5:
-                    criteria["PBR"] = 1
-                elif pbr >= 5:
-                    criteria["PBR"] = -1
-                else:
-                    criteria["PBR"] = 0
-            else:
-                criteria["PBR"] = None
-
-            if peg is not None:
-                if peg <= 1.0:
-                    criteria["PEG"] = 1
-                elif peg >= 2.0:
-                    criteria["PEG"] = -1
-                else:
-                    criteria["PEG"] = 0
-            else:
-                criteria["PEG"] = None
-
-            if ev_ebitda is not None:
-                if ev_ebitda <= 10:
-                    criteria["EV/EBITDA"] = 1
-                elif ev_ebitda >= 20:
-                    criteria["EV/EBITDA"] = -1
-                else:
-                    criteria["EV/EBITDA"] = 0
-            else:
-                criteria["EV/EBITDA"] = None
-
-            if roe_val is not None:
-                roe_pct = roe_val * 100
-                if roe_pct >= 15:
-                    criteria["ROE"] = 1
-                elif roe_pct < 5:
-                    criteria["ROE"] = -1
-                else:
-                    criteria["ROE"] = 0
-            else:
-                criteria["ROE"] = None
-
-            if debt_equity is not None:
-                if debt_equity < 100:
-                    criteria["부채"] = 1
-                elif debt_equity >= 200:
-                    criteria["부채"] = -1
-                else:
-                    criteria["부채"] = 0
-            else:
-                criteria["부채"] = None
-
-            if hi is not None and current_price is not None and hi > 0:
-                drop_pct = (hi - current_price) / hi * 100
-                if drop_pct >= 20:
-                    criteria["52주"] = 1
-                elif drop_pct <= 5:
-                    criteria["52주"] = -1
-                else:
-                    criteria["52주"] = 0
-            else:
-                criteria["52주"] = None
-
-            valid_scores = [v for v in criteria.values() if v is not None]
-            score = sum(valid_scores)
-            total_criteria = len(valid_scores)
-
-            # --- 적정 가격 계산 ---
-            fair_prices = []
-            # 1) PER 기반: EPS × 업종평균PER (없으면 15)
-            if eps_val is not None and eps_val > 0:
-                sector_per = _safe_get("sectorPE") or _safe_get("industryPE") or 15
-                fair_prices.append(eps_val * sector_per)
-
-            # 2) PBR 기반: bookValue × 1.0
-            if book_val is not None and book_val > 0:
-                fair_prices.append(book_val * 1.0)
-
-            # 3) DCF 간이: EPS × (1+earningsGrowth)^5 × 15 / (1.1^5)
-            if eps_val is not None and eps_val > 0 and earn_growth is not None:
-                growth = max(earn_growth, -0.5)  # 성장률 하한
-                future_eps = eps_val * ((1 + growth) ** 5)
-                dcf_price = future_eps * 15 / (1.1 ** 5)
-                if dcf_price > 0:
-                    fair_prices.append(dcf_price)
-
-            fair_price = sum(fair_prices) / len(fair_prices) if fair_prices else None
+            # --- 공유 모듈 결과 사용 ---
+            score = fund.score
+            total_criteria = fund.total_criteria
+            criteria = fund.criteria
+            fair_price = fund.fair_price
 
             # --- 구분선 ---
             sep = ttk.Separator(indicator_frame, orient="horizontal")
@@ -1368,6 +2034,52 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                 if name in CRITERIA_TOOLTIPS:
                     HelpTooltip(c_label, CRITERIA_TOOLTIPS[name])
 
+            # --- Row 8: 복합 팩터 모델 + F-Score ---
+            sep2 = ttk.Separator(indicator_frame, orient="horizontal")
+            sep2.pack(fill=tk.X, padx=8, pady=4)
+
+            row8 = tk.Frame(indicator_frame)
+            row8.pack(fill=tk.X, padx=8, pady=(2, 4))
+
+            # 팩터 모델
+            factor = calculate_factor_score(info)
+            factor_color = "#008800" if factor["total"] >= 7 else "#E74C3C" if factor["total"] <= 2 else "#666666"
+            factor_lbl = tk.Label(row8,
+                                  text=f"팩터 점수: {factor['total']}/9 {factor['grade']} "
+                                       f"(V:{factor['value']} M:{factor['momentum']} Q:{factor['quality']})",
+                                  font=("Arial", 9, "bold"), fg=factor_color, cursor="question_arrow")
+            factor_lbl.pack(side=tk.LEFT, padx=(0, 16))
+            HelpTooltip(factor_lbl,
+                        "복합 팩터 모델 (밸류+모멘텀+퀄리티)\n"
+                        "각 팩터 0~3점, 총합 0~9점.\n\n"
+                        "V(밸류): PER≤15 +1, PBR≤1.5 +1, PEG≤1.0 +1\n"
+                        "M(모멘텀): 강력매수=3, 매수=2, 관망=1, 매도=0\n"
+                        "Q(퀄리티): ROE≥15% +1, 부채<100% +1, 영업이익률≥15% +1\n\n"
+                        "A(7~9): 우수 | B(5~6): 양호 | C(3~4): 보통 | D(0~2): 부진")
+
+            # Piotroski F-Score
+            fscore = calculate_piotroski_fscore(info)
+            fs_color = "#008800" if fscore["score"] >= 7 else "#E74C3C" if fscore["score"] <= 2 else "#666666"
+            fs_lbl = tk.Label(row8,
+                              text=f"F-Score: {fscore['score']}/{fscore['max_score']}",
+                              font=("Arial", 9, "bold"), fg=fs_color, cursor="question_arrow")
+            fs_lbl.pack(side=tk.LEFT, padx=(0, 10))
+
+            # F-Score 세부 항목 툴팁
+            detail_lines = []
+            for item_name, item_val in fscore["details"].items():
+                if item_val is None:
+                    detail_lines.append(f"  {item_name}: N/A")
+                elif item_val == 1:
+                    detail_lines.append(f"  {item_name}: ✓ 통과")
+                else:
+                    detail_lines.append(f"  {item_name}: ✗ 미달")
+            HelpTooltip(fs_lbl,
+                        "Piotroski F-Score (재무 퀄리티 9항목)\n"
+                        "각 항목 통과 시 1점, 총합 0~9점.\n\n"
+                        + "\n".join(detail_lines) + "\n\n"
+                        "7~9점: 재무 우량 | 4~6점: 보통 | 0~3점: 취약")
+
         try:
             popup.after(0, _update_ui)
         except tk.TclError:
@@ -1379,43 +2091,151 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     one_year_ago = now - timedelta(days=365)
 
     period_range_label = tk.Label(
-        popup,
+        _scroll_inner,
         text=f"분석 기간: {one_year_ago.strftime('%Y-%m-%d')} ~ {now.strftime('%Y-%m-%d')} (1년)",
         font=("Arial", 10),
         fg="#333333"
     )
     period_range_label.pack(pady=5)
 
-    frame = tk.Frame(popup)
+    # --- 기간 모드 선택 (상대/절대) ---
+    bt_period_mode_var = tk.StringVar(value=config.config["backtest"].get("period_mode", "relative"))
+
+    period_mode_frame = tk.Frame(_scroll_inner)
+    period_mode_frame.pack(pady=(5, 0))
+
+    frame = tk.Frame(_scroll_inner)
     frame.pack(pady=10)
 
-    tk.Label(frame, text="기간 숫자:").grid(row=0, column=0, padx=5)
+    # 상대 기간 모드 라디오 + 입력
+    relative_radio = tk.Radiobutton(frame, text="기간 지정:", variable=bt_period_mode_var, value="relative")
+    relative_radio.grid(row=0, column=0, padx=5, sticky="w")
+
     period_value_entry = tk.Entry(frame, width=5)
     period_value_entry.grid(row=0, column=1, padx=5)
     period_value_entry.insert(0, config.config["backtest"].get("period", 12))
     period_value_entry.bind("<KeyRelease>", lambda event: update_dates(save=True))
     Tooltip(period_value_entry, BACKTEST_INPUT_HELP["기간 숫자"])
 
-    tk.Label(frame, text="단위:").grid(row=0, column=2, padx=5)
     period_unit_var = tk.StringVar()
     period_unit_menu = ttk.Combobox(frame, textvariable=period_unit_var, values=unit_display_options, width=5,
                                     state="readonly")
-    period_unit_menu.grid(row=0, column=3, padx=5)
+    period_unit_menu.grid(row=0, column=2, padx=5)
     saved_unit = config.config["backtest"].get("unit", "mo")
     period_unit_var.set(UNIT_DISPLAY_NAMES.get(saved_unit, saved_unit))
     period_unit_menu.bind("<<ComboboxSelected>>", lambda event: update_dates(save=True))
     Tooltip(period_unit_menu, BACKTEST_INPUT_HELP["단위"])
 
-    tk.Label(frame, text="전략 선택:").grid(row=1, column=0, padx=5)
+    # 절대 날짜 모드 라디오 + 입력
+    absolute_radio = tk.Radiobutton(frame, text="날짜 지정:", variable=bt_period_mode_var, value="absolute")
+    absolute_radio.grid(row=1, column=0, padx=5, sticky="w")
+
+    saved_start = config.config["backtest"].get("start_date", one_year_ago.strftime('%Y-%m-%d'))
+    saved_end = config.config["backtest"].get("end_date", now.strftime('%Y-%m-%d'))
+
+    tk.Label(frame, text="시작").grid(row=1, column=1, padx=(5, 0), sticky="e")
+    if _has_calendar:
+        _s = datetime.strptime(saved_start, '%Y-%m-%d')
+        bt_start_date_entry = _DateEntry(frame, width=10, date_pattern="yyyy-mm-dd",
+                                         year=_s.year, month=_s.month, day=_s.day, locale="ko_KR")
+    else:
+        bt_start_date_entry = tk.Entry(frame, width=12)
+        bt_start_date_entry.insert(0, saved_start)
+    bt_start_date_entry.grid(row=1, column=2, padx=5)
+    Tooltip(bt_start_date_entry, "시작 날짜 (YYYY-MM-DD)")
+
+    tk.Label(frame, text="종료").grid(row=1, column=3, padx=(5, 0), sticky="e")
+    if _has_calendar:
+        _e = datetime.strptime(saved_end, '%Y-%m-%d')
+        bt_end_date_entry = _DateEntry(frame, width=10, date_pattern="yyyy-mm-dd",
+                                       year=_e.year, month=_e.month, day=_e.day, locale="ko_KR")
+    else:
+        bt_end_date_entry = tk.Entry(frame, width=12)
+        bt_end_date_entry.insert(0, saved_end)
+    bt_end_date_entry.grid(row=1, column=4, padx=5)
+    Tooltip(bt_end_date_entry, "종료 날짜 (YYYY-MM-DD)")
+
+    def _toggle_period_mode(*args):
+        mode = bt_period_mode_var.get()
+        if mode == "relative":
+            period_value_entry.config(state=tk.NORMAL)
+            period_unit_menu.config(state="readonly")
+            bt_start_date_entry.config(state=tk.DISABLED)
+            bt_end_date_entry.config(state=tk.DISABLED)
+        else:
+            period_value_entry.config(state=tk.DISABLED)
+            period_unit_menu.config(state=tk.DISABLED)
+            bt_start_date_entry.config(state=tk.NORMAL)
+            bt_end_date_entry.config(state=tk.NORMAL)
+        # 날짜 범위 표시 업데이트
+        if mode == "absolute":
+            start_str = bt_start_date_entry.get().strip()
+            end_str = bt_end_date_entry.get().strip()
+            period_range_label.config(text=f"분석 기간: {start_str} ~ {end_str} (사용자 지정)")
+        else:
+            update_dates()
+
+    bt_period_mode_var.trace_add("write", _toggle_period_mode)
+    _toggle_period_mode()  # 초기 상태 설정
+
+    tk.Label(frame, text="전략 선택:").grid(row=2, column=0, padx=5)
     method_var = tk.StringVar()
     method_menu = ttk.Combobox(frame, textvariable=method_var, values=strategy_display_options, width=20, state="readonly")
-    method_menu.grid(row=1, column=1, columnspan=3, padx=5, pady=5, sticky="w")
+    method_menu.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky="w")
     saved_method = config.config["backtest"].get("method", "macd")
     method_var.set(STRATEGY_DISPLAY_NAMES.get(saved_method, saved_method))
     Tooltip(method_menu, BACKTEST_INPUT_HELP["전략 선택"])
 
+    # 손절 설정
+    stoploss_enabled_var = tk.BooleanVar(value=config.config["backtest"].get("stoploss_enabled", False))
+    stoploss_pct_var = tk.StringVar(value=str(config.config["backtest"].get("stoploss_pct", 5)))
+
+    stoploss_chk = tk.Checkbutton(frame, text="손절(%)", variable=stoploss_enabled_var)
+    stoploss_chk.grid(row=3, column=0, padx=5, pady=3, sticky="w")
+    stoploss_entry = tk.Entry(frame, textvariable=stoploss_pct_var, width=5)
+    stoploss_entry.grid(row=3, column=1, padx=5, pady=3, sticky="w")
+    Tooltip(stoploss_chk, "매수 후 설정한 %만큼 하락하면 자동 매도합니다.\n예: 5% → 100달러에 매수 시 95달러 이하로 떨어지면 손절.")
+
+    # 레짐 필터
+    regime_filter_var = tk.BooleanVar(value=config.config["backtest"].get("regime_filter", False))
+    regime_chk = tk.Checkbutton(frame, text="레짐 필터", variable=regime_filter_var)
+    regime_chk.grid(row=3, column=2, padx=5, pady=3, sticky="w")
+    Tooltip(regime_chk, "시장(SPY) 하락장일 때 매수 시그널을 무시합니다.\nSPY MA20 < MA60이면 하락장으로 판단합니다.")
+
+    # 추적 손절
+    trailing_enabled_var = tk.BooleanVar(value=config.config["backtest"].get("trailing_enabled", False))
+    trailing_type_var = tk.StringVar(value=config.config["backtest"].get("trailing_type", "pct"))
+    trailing_param_var = tk.StringVar(value=str(config.config["backtest"].get("trailing_param", 5.0)))
+
+    trailing_chk = tk.Checkbutton(frame, text="추적 손절", variable=trailing_enabled_var)
+    trailing_chk.grid(row=4, column=0, padx=5, pady=3, sticky="w")
+    Tooltip(trailing_chk, "최고가 대비 설정 비율/ATR만큼 하락 시 자동 매도.\n일반 손절과 달리 가격이 오를수록 손절선도 따라 올라갑니다.")
+
+    trailing_type_menu = ttk.Combobox(frame, textvariable=trailing_type_var,
+                                       values=["pct", "atr"], width=4, state="readonly")
+    trailing_type_menu.grid(row=4, column=1, padx=5, pady=3, sticky="w")
+    Tooltip(trailing_type_menu, "pct = 퍼센트 방식, atr = ATR 배수 방식")
+
+    trailing_entry = tk.Entry(frame, textvariable=trailing_param_var, width=5)
+    trailing_entry.grid(row=4, column=2, padx=5, pady=3, sticky="w")
+    Tooltip(trailing_entry, "퍼센트: 5.0 → 최고가 대비 5% 하락 시 매도\nATR: 2.0 → 최고가 - ATR×2 이하 시 매도")
+
+    # 포지션 사이징
+    position_sizing_var = tk.StringVar(value=config.config["backtest"].get("position_sizing", "full"))
+    tk.Label(frame, text="포지션:").grid(row=5, column=0, padx=5, pady=3, sticky="w")
+    pos_menu = ttk.Combobox(frame, textvariable=position_sizing_var,
+                             values=["full", "kelly", "atr", "fixed"], width=8, state="readonly")
+    pos_menu.grid(row=5, column=1, padx=5, pady=3, sticky="w")
+    Tooltip(pos_menu, "full: 전체 (100%)\nkelly: 켈리 공식 (최적 비율)\natr: ATR 기반 리스크 조절\nfixed: 고정 비율 (2%)")
+
+    # 워크포워드 테스트
+    walk_forward_var = tk.BooleanVar(value=config.config["backtest"].get("walk_forward_enabled", False))
+    wf_chk = tk.Checkbutton(frame, text="워크포워드 (70/30)", variable=walk_forward_var)
+    wf_chk.grid(row=5, column=2, padx=5, pady=3, sticky="w")
+    Tooltip(wf_chk, "데이터를 70% 학습 / 30% 검증으로 분할하여\n전략의 과적합 여부를 확인합니다.")
+
     # Phase 12-3: Strategy description label (STRATEGY_HELP 멀티라인)
-    strategy_desc_label = tk.Label(popup, text="", font=("Arial", 9), fg="#333333",
+    strategy_desc_label = tk.Label(_scroll_inner, text="", font=("Arial", 9), fg="#333333",
                                     justify=tk.LEFT, wraplength=450, anchor="w")
     strategy_desc_label.pack(pady=2, padx=10, fill=tk.X)
 
@@ -1427,7 +2247,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     method_var.trace_add("write", update_strategy_desc)
     update_strategy_desc()
 
-    btn_frame = tk.Frame(popup)
+    btn_frame = tk.Frame(_scroll_inner)
     btn_frame.pack(pady=10)
 
     search_btn = tk.Button(btn_frame, text="검색 및 분석", command=save_and_search)

@@ -1,7 +1,7 @@
 {
     "view_mode": "long",
     "current": {
-        "period": "2y",
+        "period": "5y",
         "interval": "1d",
         "rsi": {
             "period": 14,
@@ -25,7 +25,14 @@
         "momentum_return": {
             "return_window": 60,
             "threshold": 0.1
-        }
+        },
+        "adx_period": 14,
+        "adx_filter_enabled": false,
+        "sentiment_enabled": false,
+        "multi_timeframe_enabled": false,
+        "custom_mode": false,
+        "start_date": "2025-03-05",
+        "end_date": "2026-03-05"
     },
     "settings": {
         "short": {
@@ -83,7 +90,7 @@
             }
         },
         "long": {
-            "period": "2y",
+            "period": "5y",
             "interval": "1d",
             "rsi": {
                 "period": 14,
@@ -113,8 +120,64 @@
     "backtest": {
         "period": 2,
         "unit": "y",
-        "method": "momentum_signal"
+        "method": "momentum_signal",
+        "stoploss_enabled": false,
+        "stoploss_pct": 5.0,
+        "regime_filter": false,
+        "trailing_enabled": false,
+        "trailing_type": "pct",
+        "trailing_param": 5.0,
+        "position_sizing": "full",
+        "risk_per_trade": 2.0,
+        "atr_sizing_multiplier": 2.0,
+        "walk_forward_enabled": false,
+        "walk_forward_train_ratio": 0.7,
+        "period_mode": "relative"
     },
     "alert_enabled": true,
-    "hint_shown": true
+    "hint_shown": true,
+    "show_fundamental_columns": true,
+    "column_widths": {
+        "종목명": 150,
+        "현재가": 100,
+        "추세 신호": 200,
+        "RSI 신호": 150,
+        "수익률": 100,
+        "MACD 신호": 150,
+        "BB 신호": 150,
+        "모멘텀 신호": 150,
+        "가치 점수": 120,
+        "PER": 70,
+        "ROE": 70,
+        "52주 위치": 80,
+        "거래량": 147,
+        "변동성": 75,
+        "다이버전스": 80,
+        "ADX": 80,
+        "보유수량": 80,
+        "매수가": 90,
+        "평가손익": 130
+    },
+    "show_holdings_columns": true,
+    "column_order": [
+        "종목명",
+        "현재가",
+        "수익률",
+        "추세 신호",
+        "ADX",
+        "모멘텀 신호",
+        "MACD 신호",
+        "RSI 신호",
+        "BB 신호",
+        "거래량",
+        "가치 점수",
+        "PER",
+        "ROE",
+        "52주 위치",
+        "변동성",
+        "다이버전스",
+        "보유수량",
+        "매수가",
+        "평가손익"
+    ]
 }

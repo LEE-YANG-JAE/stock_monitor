@@ -17,11 +17,12 @@ import copy
 
 import config
 from backtest_popup import open_backtest_popup
-from help_texts import COLUMN_HELP, SIGNAL_HELP
+from help_texts import COLUMN_HELP, SIGNAL_HELP, QUANT_GUIDE
 from market_trend_manager import guess_market_session
 from stock_score import fetch_stock_data
 from ui_components import Tooltip, HelpTooltip
 from news_panel import NewsPanel, start_news_refresh
+import holdings_manager
 
 # ============================================================
 # Phase 9-1: Design constants
@@ -109,8 +110,11 @@ class AppState:
         self._sort_col = None
         self._sort_reverse = False
         self._column_help_tip = None  # 컬럼 헤더 호버 툴팁
-        self._help_panel = None  # 용어 설명 패널
         self.news_panel = None
+        self.cached_news_list = []
+        self.news_lock = threading.Lock()
+        self.holdings = {}            # {ticker: {quantity, avg_price, purchase_date, notes}}
+        self.holdings_lock = threading.Lock()
 
 
 app = AppState()
@@ -182,7 +186,42 @@ def _update_radio_tooltips():
 
 def on_radio_select():
     selected_value = app.radio_var.get()
+
+    # 사용자 지정 날짜 프레임 표시/숨김
+    if hasattr(app, '_custom_date_frame'):
+        if selected_value == "custom":
+            app._custom_date_frame.pack(after=app._radio_label_frame, pady=(0, PADDING_SM), padx=PADDING_MD)
+        else:
+            app._custom_date_frame.pack_forget()
+
+    if selected_value == "custom":
+        # custom 모드: start/end 날짜 사용
+        config.config["current"]["custom_mode"] = True
+        start_str = app._custom_start_entry.get().strip()
+        end_str = app._custom_end_entry.get().strip()
+        try:
+            datetime.strptime(start_str, '%Y-%m-%d')
+            datetime.strptime(end_str, '%Y-%m-%d')
+        except ValueError:
+            messagebox.showerror("날짜 오류", "날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)")
+            return
+        if start_str >= end_str:
+            messagebox.showerror("날짜 오류", "시작 날짜가 종료 날짜보다 이전이어야 합니다.")
+            return
+        config.config["current"]["start_date"] = start_str
+        config.config["current"]["end_date"] = end_str
+        config.config["view_mode"] = selected_value
+        config.save_config(config.get_config())
+
+        if app.period_info_label:
+            app.period_info_label.config(text="사용자 지정")
+            app.date_range_label.config(text=f"{start_str} ~ {end_str}")
+
+        refresh_table()
+        return
+
     try:
+        config.config["current"]["custom_mode"] = False
         settings = config.config["settings"][selected_value]
         config.config["current"]["period"] = settings["period"]
         config.config["current"]["interval"] = settings["interval"]
@@ -274,6 +313,8 @@ def add_ticker():
                     logging.info(f"[STOCK] {company_name} ({name_or_ticker}) added")
                     messagebox.showinfo("추가 완료", f"{company_name} ({name_or_ticker}) 추가되었습니다.")
                     refresh_table_once()
+                    if messagebox.askyesno("보유 정보", f"{company_name}의 보유 정보를 입력하시겠습니까?"):
+                        open_holdings_edit_dialog(name_or_ticker, company_name)
                 else:
                     messagebox.showinfo("중복", f"{company_name} ({name_or_ticker})는 이미 감시 중입니다.")
         else:
@@ -304,6 +345,9 @@ def remove_ticker():
                 if ticker_to_remove in app.watchlist:
                     app.watchlist.remove(ticker_to_remove)
                     save_watchlist()
+                    with app.holdings_lock:
+                        holdings_manager.remove_holding(app.holdings, ticker_to_remove)
+                        holdings_manager.save_holdings(app.holdings)
                     logging.info(f"[STOCK] {company_name_with_ticker} removed")
                     # Phase 11-5: Undo support
                     app.undo_ticker = ticker_to_remove
@@ -335,6 +379,284 @@ def save_watchlist():
             json.dump(app.watchlist, f)
     except Exception as e:
         logging.error(f"[WATCHLIST] Error saving: {e}")
+
+
+def open_holdings_edit_dialog(ticker, company_name=""):
+    """보유 정보 편집 다이얼로그 (거래 내역 기반)."""
+    try:
+        from tkcalendar import DateEntry as _DateEntry
+        _has_calendar = True
+    except ImportError:
+        _has_calendar = False
+
+    popup = tk.Toplevel(app.root)
+    title = f"보유 정보 - {ticker}"
+    if company_name:
+        title += f" ({company_name})"
+    popup.title(title)
+    popup.geometry("620x520")
+    popup.grab_set()
+    popup.resizable(True, True)
+    popup.minsize(550, 400)
+
+    # --- 요약 라벨 ---
+    summary_var = tk.StringVar()
+
+    def _update_summary():
+        holding = holdings_manager.get_holding(app.holdings, ticker)
+        if holding and holding["quantity"] > 0:
+            rpnl = holding["total_realized_pnl"]
+            rpnl_sign = "+" if rpnl >= 0 else ""
+            summary_var.set(
+                f"현재 보유: {holding['quantity']:g}주 | "
+                f"평균단가: ${holding['avg_price']:,.2f} | "
+                f"실현손익: {rpnl_sign}${rpnl:,.0f}"
+            )
+        elif holding and holding["total_realized_pnl"] != 0:
+            rpnl = holding["total_realized_pnl"]
+            rpnl_sign = "+" if rpnl >= 0 else ""
+            summary_var.set(f"보유 없음 | 실현손익: {rpnl_sign}${rpnl:,.0f}")
+        else:
+            summary_var.set("보유 없음")
+
+    _update_summary()
+    summary_label = tk.Label(popup, textvariable=summary_var, font=("Arial", 11, "bold"),
+                              fg="#1A5276", pady=8)
+    summary_label.pack(fill=tk.X, padx=10)
+
+    # --- 거래 추가 프레임 ---
+    add_frame = tk.LabelFrame(popup, text="거래 추가", font=FONTS["body"])
+    add_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+
+    add_inner = tk.Frame(add_frame, padx=8, pady=5)
+    add_inner.pack(fill=tk.X)
+
+    # Row 1: 유형, 수량, 단가
+    row1 = tk.Frame(add_inner)
+    row1.pack(fill=tk.X, pady=2)
+
+    tx_type_var = tk.StringVar(value="매수")
+    tx_type_combo = ttk.Combobox(row1, textvariable=tx_type_var, values=["매수", "매도"],
+                                  width=5, state="readonly", font=FONTS["body"])
+    tx_type_combo.pack(side=tk.LEFT, padx=(0, 5))
+
+    tk.Label(row1, text="수량:", font=FONTS["body"]).pack(side=tk.LEFT)
+    qty_entry = tk.Entry(row1, width=10, font=FONTS["body"])
+    qty_entry.pack(side=tk.LEFT, padx=(2, 8))
+
+    tk.Label(row1, text="단가($):", font=FONTS["body"]).pack(side=tk.LEFT)
+    price_entry = tk.Entry(row1, width=10, font=FONTS["body"])
+    price_entry.pack(side=tk.LEFT, padx=(2, 0))
+
+    # Row 2: 날짜, 메모, 추가 버튼
+    row2 = tk.Frame(add_inner)
+    row2.pack(fill=tk.X, pady=2)
+
+    tk.Label(row2, text="날짜:", font=FONTS["body"]).pack(side=tk.LEFT)
+    _now = datetime.now()
+    if _has_calendar:
+        date_entry = _DateEntry(row2, width=10, font=FONTS["body"], date_pattern="yyyy-mm-dd",
+                                year=_now.year, month=_now.month, day=_now.day, locale="ko_KR")
+        date_entry.pack(side=tk.LEFT, padx=(2, 8))
+    else:
+        date_entry = tk.Entry(row2, width=12, font=FONTS["body"])
+        date_entry.pack(side=tk.LEFT, padx=(2, 8))
+        date_entry.insert(0, _now.strftime("%Y-%m-%d"))
+
+    tk.Label(row2, text="메모:", font=FONTS["body"]).pack(side=tk.LEFT)
+    notes_entry = tk.Entry(row2, width=15, font=FONTS["body"])
+    notes_entry.pack(side=tk.LEFT, padx=(2, 8))
+
+    def _add_transaction():
+        try:
+            qty_str = qty_entry.get().strip()
+            price_str = price_entry.get().strip()
+            if not qty_str or not price_str:
+                messagebox.showwarning("입력 오류", "수량과 단가를 입력하세요.", parent=popup)
+                return
+            qty = float(qty_str)
+            price = float(price_str)
+            if qty <= 0:
+                messagebox.showwarning("입력 오류", "수량은 0보다 커야 합니다.", parent=popup)
+                return
+            if price <= 0:
+                messagebox.showwarning("입력 오류", "단가는 0보다 커야 합니다.", parent=popup)
+                return
+
+            tx_type = "buy" if tx_type_var.get() == "매수" else "sell"
+            if _has_calendar:
+                tx_date = date_entry.get_date().strftime("%Y-%m-%d")
+            else:
+                tx_date = date_entry.get().strip()
+            notes = notes_entry.get().strip()
+
+            with app.holdings_lock:
+                ok, err = holdings_manager.add_transaction(
+                    app.holdings, ticker, tx_type, qty, price, tx_date, notes)
+                if not ok:
+                    messagebox.showwarning("매도 오류", err, parent=popup)
+                    return
+                holdings_manager.save_holdings(app.holdings)
+
+            # 입력 필드 초기화
+            qty_entry.delete(0, tk.END)
+            price_entry.delete(0, tk.END)
+            notes_entry.delete(0, tk.END)
+            _update_summary()
+            _refresh_tx_tree()
+        except ValueError:
+            messagebox.showwarning("입력 오류", "수량과 단가는 숫자여야 합니다.", parent=popup)
+
+    tk.Button(row2, text="추가", command=_add_transaction, font=FONTS["body"],
+              width=6, bg="#4A90D9", fg="white").pack(side=tk.LEFT)
+
+    # --- 거래 내역 Treeview ---
+    tx_frame = tk.LabelFrame(popup, text="거래 내역", font=FONTS["body"])
+    tx_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+
+    tx_cols = ("유형", "수량", "단가", "금액", "날짜", "메모")
+    tx_tree = ttk.Treeview(tx_frame, columns=tx_cols, show="headings", height=8)
+    tx_vsb = ttk.Scrollbar(tx_frame, orient="vertical", command=tx_tree.yview)
+    tx_tree.configure(yscrollcommand=tx_vsb.set)
+
+    col_widths = {"유형": 50, "수량": 60, "단가": 80, "금액": 90, "날짜": 85, "메모": 120}
+    for col in tx_cols:
+        tx_tree.heading(col, text=col)
+        anchor = "e" if col in ("수량", "단가", "금액") else ("center" if col == "유형" else "w")
+        tx_tree.column(col, width=col_widths[col], anchor=anchor, minwidth=40)
+
+    tx_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0), pady=5)
+    tx_vsb.pack(side=tk.RIGHT, fill=tk.Y, pady=5, padx=(0, 5))
+
+    # 매수/매도 색상 태그
+    tx_tree.tag_configure("buy_tx", foreground="#2E7D32")
+    tx_tree.tag_configure("sell_tx", foreground="#E74C3C")
+
+    def _refresh_tx_tree():
+        for row in tx_tree.get_children():
+            tx_tree.delete(row)
+        info = app.holdings.get(ticker)
+        if not info:
+            return
+        transactions = info.get("transactions", [])
+        for tx in transactions:
+            tx_type_display = "매수" if tx["type"] == "buy" else "매도"
+            amount = tx["quantity"] * tx["price"]
+            tag = "buy_tx" if tx["type"] == "buy" else "sell_tx"
+            tx_tree.insert("", "end", values=(
+                tx_type_display,
+                f"{tx['quantity']:g}",
+                f"${tx['price']:,.2f}",
+                f"${amount:,.0f}",
+                tx.get("date", ""),
+                tx.get("notes", ""),
+            ), tags=(tag,))
+
+    _refresh_tx_tree()
+
+    def _edit_selected_notes(event=None):
+        selection = tx_tree.selection()
+        if not selection:
+            if event is None:
+                messagebox.showwarning("선택 오류", "메모를 수정할 거래를 선택하세요.", parent=popup)
+            return
+        idx = tx_tree.index(selection[0])
+        info = app.holdings.get(ticker)
+        if not info:
+            return
+        transactions = info.get("transactions", [])
+        if idx < 0 or idx >= len(transactions):
+            return
+        old_notes = transactions[idx].get("notes", "")
+
+        edit_win = tk.Toplevel(popup)
+        edit_win.title("메모 수정")
+        edit_win.geometry("350x120")
+        edit_win.grab_set()
+        edit_win.transient(popup)
+        edit_win.resizable(False, False)
+
+        tk.Label(edit_win, text="메모:", font=FONTS["body"]).pack(anchor="w", padx=10, pady=(10, 2))
+        memo_entry = tk.Entry(edit_win, width=40, font=FONTS["body"])
+        memo_entry.pack(padx=10, fill=tk.X)
+        memo_entry.insert(0, old_notes)
+        memo_entry.focus_set()
+        memo_entry.select_range(0, tk.END)
+
+        def _save_notes():
+            new_notes = memo_entry.get().strip()
+            with app.holdings_lock:
+                transactions[idx]["notes"] = new_notes
+                holdings_manager.save_holdings(app.holdings)
+            _refresh_tx_tree()
+            edit_win.destroy()
+
+        memo_entry.bind("<Return>", lambda e: _save_notes())
+
+        btn_row = tk.Frame(edit_win)
+        btn_row.pack(pady=8)
+        tk.Button(btn_row, text="저장", command=_save_notes, font=FONTS["body"],
+                  width=8, bg="#4A90D9", fg="white").pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_row, text="취소", command=edit_win.destroy, font=FONTS["body"],
+                  width=8).pack(side=tk.LEFT, padx=5)
+
+    tx_tree.bind("<Double-1>", _edit_selected_notes)
+
+    # --- 하단 버튼 ---
+    btn_frame = tk.Frame(popup)
+    btn_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+    def _delete_selected_tx():
+        selection = tx_tree.selection()
+        if not selection:
+            messagebox.showwarning("선택 오류", "삭제할 거래를 선택하세요.", parent=popup)
+            return
+        idx = tx_tree.index(selection[0])
+        with app.holdings_lock:
+            ok, err = holdings_manager.remove_transaction(app.holdings, ticker, idx)
+            if not ok:
+                messagebox.showwarning("삭제 오류", err, parent=popup)
+                return
+            holdings_manager.save_holdings(app.holdings)
+        _update_summary()
+        _refresh_tx_tree()
+
+    def _clear_all():
+        if not messagebox.askyesno("확인", f"{ticker}의 모든 거래 내역을 삭제하시겠습니까?", parent=popup):
+            return
+        with app.holdings_lock:
+            holdings_manager.remove_holding(app.holdings, ticker)
+            holdings_manager.save_holdings(app.holdings)
+        _update_summary()
+        _refresh_tx_tree()
+
+    def _on_close():
+        popup.destroy()
+        refresh_table_once()
+
+    tk.Button(btn_frame, text="메모 수정", command=_edit_selected_notes,
+              font=FONTS["body"]).pack(side=tk.LEFT, padx=3)
+    tk.Button(btn_frame, text="선택 거래 삭제", command=_delete_selected_tx,
+              font=FONTS["body"]).pack(side=tk.LEFT, padx=3)
+    tk.Button(btn_frame, text="전체 초기화", command=_clear_all,
+              font=FONTS["body"], fg="#E74C3C").pack(side=tk.LEFT, padx=3)
+    tk.Button(btn_frame, text="닫기", command=_on_close,
+              font=FONTS["body"], width=8).pack(side=tk.RIGHT, padx=3)
+
+
+def edit_holding_for_selected():
+    """선택된 종목의 보유 정보 편집."""
+    selection = app.table.selection()
+    if not selection:
+        messagebox.showwarning("선택 오류", "종목을 선택해주세요.")
+        return
+    item = selection[0]
+    company_name_with_ticker = str(app.table.item(item)["values"][0])
+    match = re.search(r'\((.*?)\)', company_name_with_ticker)
+    if match:
+        ticker = match.group(1)
+        company_name = company_name_with_ticker.split("(")[0].strip()
+        open_holdings_edit_dialog(ticker, company_name)
 
 
 def load_watchlist():
@@ -441,6 +763,11 @@ def on_item_double_click(event):
 # ============================================================
 def update_table(data):
     try:
+        # 사용자가 조절한 컬럼 너비 보존
+        saved_widths = {}
+        for col in app.table["columns"]:
+            saved_widths[col] = app.table.column(col, "width")
+
         for row in app.table.get_children():
             app.table.delete(row)
 
@@ -467,8 +794,30 @@ def update_table(data):
                 macd_signal = record.macd_signal
                 bb_signal = record.bb_signal
                 momentum_signal = record.momentum_signal
+                value_score = getattr(record, 'value_score', 'N/A')
+                value_judgment = getattr(record, 'value_judgment', 'N/A')
+                per_value = getattr(record, 'per_value', None)
+                roe_value = getattr(record, 'roe_value', None)
+                week52_pct = getattr(record, 'week52_pct', None)
+                volume_ratio = getattr(record, 'volume_ratio', None)
+                atr_pct = getattr(record, 'atr_pct', None)
+                divergence_signal = getattr(record, 'divergence_signal', '')
+                liquidity_warning = getattr(record, 'liquidity_warning', '')
+                adx_value = getattr(record, 'adx_value', None)
+                adx_signal = getattr(record, 'adx_signal', '')
             else:
-                (name, t, price, trend, rsi, rate, rate_color, macd_signal, bb_signal, momentum_signal) = record
+                (name, t, price, trend, rsi, rate, rate_color, macd_signal, bb_signal, momentum_signal) = record[:10]
+                value_score = 'N/A'
+                value_judgment = 'N/A'
+                per_value = None
+                roe_value = None
+                week52_pct = None
+                volume_ratio = None
+                atr_pct = None
+                divergence_signal = ''
+                liquidity_warning = ''
+                adx_value = None
+                adx_signal = ''
 
             rsi_value = float(rsi.replace('%', ''))
             if rsi_value > config.config['current']['rsi']['upper']:
@@ -478,15 +827,96 @@ def update_table(data):
             else:
                 rsi_display = f"{rsi} (중립)"
 
+            # 가치 점수 표시 문자열
+            if value_judgment and value_judgment != 'N/A':
+                value_display = f"{value_judgment} ({value_score})"
+            else:
+                value_display = "N/A"
+
+            per_display = f"{per_value:.1f}" if per_value is not None else "N/A"
+            roe_display = f"{roe_value:.1f}%" if roe_value is not None else "N/A"
+            week52_display = f"{week52_pct:.0f}%" if week52_pct is not None else "N/A"
+
+            # 거래량 비율 표시: 평균 대비 배수 + 상태
+            if volume_ratio is not None:
+                if volume_ratio >= 2.0:
+                    vol_display = f"×{volume_ratio:.1f} 폭증"
+                elif volume_ratio >= 1.5:
+                    vol_display = f"×{volume_ratio:.1f} 증가"
+                elif volume_ratio <= 0.5:
+                    vol_display = f"×{volume_ratio:.1f} 부족"
+                else:
+                    vol_display = f"×{volume_ratio:.1f}"
+            else:
+                vol_display = "N/A"
+
+            # ATR 변동성 표시
+            if atr_pct is not None:
+                if atr_pct >= 5:
+                    atr_display = f"{atr_pct:.1f}% 고"
+                elif atr_pct >= 3:
+                    atr_display = f"{atr_pct:.1f}% 중"
+                else:
+                    atr_display = f"{atr_pct:.1f}% 저"
+            else:
+                atr_display = "N/A"
+
+            # 유동성 경고 표시
+            if liquidity_warning:
+                vol_display = f"{vol_display} [{liquidity_warning}]"
+
+            div_display = divergence_signal if divergence_signal else "-"
+
+            # ADX 표시
+            if adx_value is not None:
+                adx_display = f"{adx_value} {adx_signal}"
+            else:
+                adx_display = "N/A"
+
+            # 보유 정보 표시
+            holding = holdings_manager.get_holding(app.holdings, t)
+            is_held = holding is not None and holding.get("quantity", 0) > 0
+            if is_held:
+                h_qty = holding["quantity"]
+                h_avg = holding["avg_price"]
+                qty_display = f"{h_qty:g}"
+                avg_display = f"${h_avg:,.2f}"
+                try:
+                    current_price_num = float(str(price).replace('$', '').replace(',', ''))
+                    pnl_val = (current_price_num - h_avg) * h_qty
+                    pnl_pct = (current_price_num - h_avg) / h_avg * 100 if h_avg > 0 else 0
+                    sign = "+" if pnl_val >= 0 else ""
+                    pnl_display = f"{sign}${pnl_val:,.0f} ({sign}{pnl_pct:.1f}%)"
+                except (ValueError, TypeError):
+                    pnl_display = "-"
+            else:
+                qty_display = "-"
+                avg_display = "-"
+                pnl_display = "-"
+
+            # 보유 종목 표시: 종목명 앞에 ★ 추가
+            display_name = f"★ {name} ({t})" if is_held else f"{name} ({t})"
+
             row_id = app.table.insert("", "end", values=(
-                f"{name} ({t})",
+                display_name,
                 price,
                 trend,
                 rsi_display,
                 rate,
                 macd_signal,
                 bb_signal,
-                momentum_signal
+                momentum_signal,
+                value_display,
+                per_display,
+                roe_display,
+                week52_display,
+                vol_display,
+                atr_display,
+                div_display,
+                adx_display,
+                qty_display,
+                avg_display,
+                pnl_display
             ))
 
             # Phase 9-3: Row-level color based on momentum signal
@@ -500,12 +930,20 @@ def update_table(data):
                 tag = "sell"
             else:
                 tag = "hold"
-            app.table.item(row_id, tags=(tag,))
+
+            # 보유 종목이면 has_holding 태그 병합 (hold 상태일 때만 배경색 적용)
+            if is_held and tag == "hold":
+                app.table.item(row_id, tags=(tag, "has_holding"))
+            else:
+                app.table.item(row_id, tags=(tag,))
 
             # Phase 11-6: Price change highlight
             prev_price = app.previous_data.get(t)
             if prev_price and prev_price != price:
-                app.table.item(row_id, tags=(tag, "price_changed"))
+                tags = [tag, "price_changed"]
+                if is_held and tag == "hold":
+                    tags.append("has_holding")
+                app.table.item(row_id, tags=tuple(tags))
                 # Schedule removal of highlight after 3 seconds
                 app.root.after(3000, lambda rid=row_id, tg=tag: _remove_highlight(rid, tg))
 
@@ -525,14 +963,9 @@ def update_table(data):
                         pass
                     break  # One beep per refresh cycle
 
-        # Phase 9-2: Column widths
-        min_widths = {
-            "종목명": 150, "현재가": 100, "추세 신호": 200,
-            "RSI 신호": 150, "수익률": 100, "MACD 신호": 150,
-            "BB 신호": 150, "모멘텀 신호": 150
-        }
-        for col, width in min_widths.items():
-            app.table.column(col, width=width, minwidth=width)
+        # 저장해둔 컬럼 너비 복원
+        for col, w in saved_widths.items():
+            app.table.column(col, width=w)
 
     except Exception as e:
         logging.error(f"[TABLE] update_table error: {e}")
@@ -591,6 +1024,7 @@ def show_context_menu(event):
         app.table.selection_set(row_id)
         ctx_menu = tk.Menu(app.root, tearoff=0)
         ctx_menu.add_command(label="백테스트 실행", command=lambda: on_item_double_click(None))
+        ctx_menu.add_command(label="보유 정보 편집", command=edit_holding_for_selected)
         ctx_menu.add_command(label="종목 삭제", command=remove_ticker)
         ctx_menu.add_separator()
         ctx_menu.add_command(label="클립보드 복사", command=lambda: _copy_to_clipboard(row_id))
@@ -670,8 +1104,24 @@ def show_splash(root):
 # ============================================================
 # Phase 2-4: Graceful shutdown
 # ============================================================
+def _save_column_widths():
+    """현재 컬럼 너비를 config에 저장."""
+    try:
+        widths = {}
+        for col in app.table["columns"]:
+            widths[col] = app.table.column(col, "width")
+        config.config["column_widths"] = widths
+        config.save_config(config.get_config())
+    except Exception as e:
+        logging.error(f"[CONFIG] Column width save error: {e}")
+
+
 def on_closing():
     logging.info("[STOP] Application shutting down...")
+
+    # 컬럼 너비 저장
+    _save_column_widths()
+
     app.shutdown_event.set()
 
     # Wait for monitor thread
@@ -1123,11 +1573,27 @@ def create_menu_bar(root):
     view_menu.add_command(label="단기", command=lambda: _set_view("short"))
     view_menu.add_command(label="중기", command=lambda: _set_view("middle"))
     view_menu.add_command(label="장기", command=lambda: _set_view("long"))
+    view_menu.add_command(label="사용자 지정", command=lambda: _set_view("custom"))
     menubar.add_cascade(label="보기", menu=view_menu)
+
+    # Analysis menu
+    from portfolio_analysis import open_correlation_popup, open_portfolio_popup, open_optimization_popup, open_portfolio_evaluation_popup
+    analysis_menu = tk.Menu(menubar, tearoff=0)
+    analysis_menu.add_command(label="포트폴리오 평가 (Ctrl+P)",
+                              command=lambda: open_portfolio_evaluation_popup(app.watchlist, app.holdings))
+    analysis_menu.add_separator()
+    analysis_menu.add_command(label="상관관계 매트릭스",
+                              command=lambda: open_correlation_popup(app.watchlist, app.holdings))
+    analysis_menu.add_command(label="포트폴리오 분석",
+                              command=lambda: open_portfolio_popup(app.watchlist, app.holdings))
+    analysis_menu.add_command(label="포트폴리오 최적화",
+                              command=lambda: open_optimization_popup(app.watchlist, app.holdings))
+    menubar.add_cascade(label="분석", menu=analysis_menu)
 
     # Help menu
     help_menu = tk.Menu(menubar, tearoff=0)
     help_menu.add_command(label="용어 설명", command=show_help_window)
+    help_menu.add_command(label="퀀트 투자 가이드", command=show_quant_guide)
     help_menu.add_separator()
     help_menu.add_command(label="정보", command=lambda: messagebox.showinfo(
         "정보", "미국 주식 모니터링 v2.0\n\nYahoo Finance 기반 실시간 분석"))
@@ -1156,6 +1622,9 @@ def bind_shortcuts(root):
     root.bind("<Control-q>", lambda e: on_closing())
     root.bind("<Control-Q>", lambda e: on_closing())
     root.bind("<Return>", lambda e: on_item_double_click(e) if app.table.selection() else None)
+    from portfolio_analysis import open_portfolio_evaluation_popup
+    root.bind("<Control-p>", lambda e: open_portfolio_evaluation_popup(app.watchlist, app.holdings))
+    root.bind("<Control-P>", lambda e: open_portfolio_evaluation_popup(app.watchlist, app.holdings))
 
 
 # ============================================================
@@ -1205,40 +1674,6 @@ def _hide_heading_tooltip(event=None):
 
 
 # ============================================================
-# Help panel toggle
-# ============================================================
-def toggle_help_panel():
-    """'? 용어 설명' 버튼으로 도움말 팝업 표시/숨김."""
-    if app._help_panel and app._help_panel.winfo_exists():
-        app._help_panel.destroy()
-        app._help_panel = None
-        return
-
-    popup = tk.Toplevel(app.root)
-    popup.title("신호 용어 설명")
-    popup.geometry("400x300")
-    popup.minsize(350, 250)
-
-    header_frame = tk.Frame(popup)
-    header_frame.pack(fill=tk.X, padx=12, pady=(10, 6))
-
-    for i, (signal, (en_name, desc)) in enumerate(SIGNAL_HELP.items()):
-        fg = "#2E7D32" if "매수" in signal else "#E74C3C" if "매도" in signal else "#555"
-        tk.Label(header_frame, text=signal, font=("Arial", 10, "bold"), width=10,
-                 anchor="w", fg=fg).grid(row=i, column=0, padx=(0, 4))
-        tk.Label(header_frame, text=desc, font=("Arial", 9), anchor="w",
-                 fg="#555").grid(row=i, column=1, sticky="w")
-
-    tk.Label(popup, text="컬럼 헤더에 마우스를 올리면 각 컬럼 설명이 표시됩니다.",
-             font=("Arial", 8), fg="#333333").pack(padx=8, pady=(4, 6))
-
-    tk.Button(popup, text="닫기", command=popup.destroy).pack(pady=(0, 8))
-
-    app._help_panel = popup
-    popup.protocol("WM_DELETE_WINDOW", lambda: (setattr(app, '_help_panel', None), popup.destroy()))
-
-
-# ============================================================
 # Help window (전체 용어 설명 별도 창)
 # ============================================================
 def show_help_window():
@@ -1272,6 +1707,44 @@ def show_help_window():
     for signal, (en_name, desc) in SIGNAL_HELP.items():
         tk.Label(scroll_frame, text=f"{signal} ({en_name})", font=("Arial", 10, "bold"), anchor="w").pack(anchor="w", padx=14, pady=(4, 0))
         tk.Label(scroll_frame, text=desc, font=("Arial", 10), anchor="w", justify=tk.LEFT, wraplength=550).pack(anchor="w", padx=24, pady=(0, 2))
+
+    # 마우스 휠 스크롤
+    def _on_mousewheel(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    win.protocol("WM_DELETE_WINDOW", lambda: (canvas.unbind_all("<MouseWheel>"), win.destroy()))
+
+
+# ============================================================
+# Quant guide popup
+# ============================================================
+def show_quant_guide():
+    """퀀트 투자 가이드 팝업."""
+    win = tk.Toplevel(app.root)
+    win.title("퀀트 투자 가이드")
+    win.geometry("650x550")
+    win.minsize(550, 450)
+
+    canvas = tk.Canvas(win)
+    scrollbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
+    scroll_frame = tk.Frame(canvas)
+
+    scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    tk.Label(scroll_frame, text="퀀트 투자 가이드", font=("Arial", 14, "bold")).pack(
+        anchor="w", padx=10, pady=(10, 6))
+
+    for category, content in QUANT_GUIDE.items():
+        tk.Label(scroll_frame, text=category, font=("Arial", 11, "bold"),
+                 fg="#1A5276", anchor="w").pack(anchor="w", padx=14, pady=(8, 2))
+        tk.Label(scroll_frame, text=content, font=("Arial", 10), anchor="w",
+                 justify=tk.LEFT, wraplength=600).pack(anchor="w", padx=24, pady=(0, 4))
+        ttk.Separator(scroll_frame, orient="horizontal").pack(fill=tk.X, padx=10, pady=4)
 
     # 마우스 휠 스크롤
     def _on_mousewheel(event):
@@ -1323,9 +1796,9 @@ def main():
     refresh_button.pack(side=tk.LEFT, padx=PADDING_MD)
     Tooltip(refresh_button, "전체 새로고침 (Ctrl+R)")
 
-    help_toggle_btn = tk.Button(button_frame, text="? 용어 설명", command=toggle_help_panel, font=FONTS["body"])
-    help_toggle_btn.pack(side=tk.LEFT, padx=PADDING_MD)
-    Tooltip(help_toggle_btn, "신호 용어 설명 패널 열기/닫기")
+    holdings_btn = tk.Button(button_frame, text="보유 편집", command=edit_holding_for_selected, font=FONTS["body"])
+    holdings_btn.pack(side=tk.LEFT, padx=PADDING_MD)
+    Tooltip(holdings_btn, "선택 종목 보유 정보 편집")
 
     # Radio buttons with LabelFrame (Phase 9-4)
     app.radio_var = tk.StringVar(value=config.config["view_mode"])
@@ -1343,9 +1816,13 @@ def main():
     long_radio = tk.Radiobutton(radio_inner, text="장기", variable=app.radio_var, value="long",
                                  command=on_radio_select, font=FONTS["body"])
 
+    custom_radio = tk.Radiobutton(radio_inner, text="사용자 지정", variable=app.radio_var, value="custom",
+                                    command=on_radio_select, font=FONTS["body"])
+
     short_radio.pack(side=tk.LEFT, padx=PADDING_MD)
     middle_radio.pack(side=tk.LEFT, padx=PADDING_MD)
     long_radio.pack(side=tk.LEFT, padx=PADDING_MD)
+    custom_radio.pack(side=tk.LEFT, padx=PADDING_MD)
 
     # Phase 10-5: Tooltips on radio buttons (설정값 기반 동적 생성)
     app._radio_tooltips = {
@@ -1353,6 +1830,7 @@ def main():
         "middle": Tooltip(middle_radio, _format_preset_tooltip("middle")),
         "long": Tooltip(long_radio, _format_preset_tooltip("long")),
     }
+    Tooltip(custom_radio, "직접 시작/종료 날짜를 입력합니다")
 
     # Phase 9-4: Period info label (2줄: period/interval + 날짜 범위)
     p = config.config["current"]["period"]
@@ -1361,6 +1839,53 @@ def main():
     app.period_info_label.pack(pady=(2, 0))
     app.date_range_label = tk.Label(radio_label_frame, text=_format_date_range_text(p), font=FONTS["small"], fg="#333333")
     app.date_range_label.pack(pady=(0, 2))
+
+    app._radio_label_frame = radio_label_frame
+
+    # 사용자 지정 날짜 입력 프레임 (기본 숨김)
+    custom_date_frame = tk.Frame(root)
+    app._custom_date_frame = custom_date_frame
+
+    _now = datetime.now()
+    _one_year_ago = _now - timedelta(days=365)
+
+    try:
+        from tkcalendar import DateEntry as _MainDateEntry
+        _main_has_calendar = True
+    except ImportError:
+        _main_has_calendar = False
+
+    _saved_start = config.config["current"].get("start_date", _one_year_ago.strftime('%Y-%m-%d'))
+    _saved_end = config.config["current"].get("end_date", _now.strftime('%Y-%m-%d'))
+
+    tk.Label(custom_date_frame, text="시작:", font=FONTS["body"]).pack(side=tk.LEFT, padx=(PADDING_MD, 2))
+    if _main_has_calendar:
+        _s = datetime.strptime(_saved_start, '%Y-%m-%d')
+        app._custom_start_entry = _MainDateEntry(custom_date_frame, width=10, font=FONTS["body"],
+                                                  date_pattern="yyyy-mm-dd",
+                                                  year=_s.year, month=_s.month, day=_s.day, locale="ko_KR")
+    else:
+        app._custom_start_entry = tk.Entry(custom_date_frame, width=12, font=FONTS["body"])
+        app._custom_start_entry.insert(0, _saved_start)
+    app._custom_start_entry.pack(side=tk.LEFT, padx=2)
+
+    tk.Label(custom_date_frame, text="종료:", font=FONTS["body"]).pack(side=tk.LEFT, padx=(PADDING_MD, 2))
+    if _main_has_calendar:
+        _e = datetime.strptime(_saved_end, '%Y-%m-%d')
+        app._custom_end_entry = _MainDateEntry(custom_date_frame, width=10, font=FONTS["body"],
+                                                date_pattern="yyyy-mm-dd",
+                                                year=_e.year, month=_e.month, day=_e.day, locale="ko_KR")
+    else:
+        app._custom_end_entry = tk.Entry(custom_date_frame, width=12, font=FONTS["body"])
+        app._custom_end_entry.insert(0, _saved_end)
+    app._custom_end_entry.pack(side=tk.LEFT, padx=2)
+
+    custom_apply_btn = tk.Button(custom_date_frame, text="적용", command=on_radio_select, font=FONTS["body"])
+    custom_apply_btn.pack(side=tk.LEFT, padx=PADDING_MD)
+
+    # "custom" 모드이면 날짜 프레임 표시
+    if app.radio_var.get() == "custom":
+        custom_date_frame.pack(after=radio_label_frame, pady=(0, PADDING_SM), padx=PADDING_MD)
 
     # PanedWindow: 테이블 + 뉴스 패널
     paned = tk.PanedWindow(root, orient=tk.VERTICAL, sashwidth=6, sashrelief=tk.RAISED)
@@ -1371,7 +1896,9 @@ def main():
     table_frame.grid_rowconfigure(0, weight=1)
     table_frame.grid_columnconfigure(0, weight=1)
 
-    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "BB 신호", "모멘텀 신호")
+    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "BB 신호", "모멘텀 신호",
+               "가치 점수", "PER", "ROE", "52주 위치", "거래량", "변동성", "다이버전스", "ADX",
+               "보유수량", "매수가", "평가손익")
     app.table = ttk.Treeview(table_frame, columns=columns, show="headings")
     vsb = ttk.Scrollbar(table_frame, orient="vertical", command=app.table.yview)
     hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=app.table.xview)
@@ -1391,13 +1918,29 @@ def main():
         "MACD 신호": {"width": 150, "anchor": "center"},
         "BB 신호": {"width": 150, "anchor": "center"},
         "모멘텀 신호": {"width": 150, "anchor": "center"},
+        "가치 점수": {"width": 120, "anchor": "center"},
+        "PER": {"width": 70, "anchor": "e"},
+        "ROE": {"width": 70, "anchor": "e"},
+        "52주 위치": {"width": 80, "anchor": "e"},
+        "거래량": {"width": 90, "anchor": "center"},
+        "변동성": {"width": 75, "anchor": "center"},
+        "다이버전스": {"width": 80, "anchor": "center"},
+        "ADX": {"width": 80, "anchor": "center"},
+        "보유수량": {"width": 80, "anchor": "e"},
+        "매수가": {"width": 90, "anchor": "e"},
+        "평가손익": {"width": 130, "anchor": "e"},
     }
+
+    # 저장된 컬럼 너비 로드
+    saved_col_widths = config.config.get("column_widths", {})
 
     for col in columns:
         cfg = col_config[col]
+        # 저장된 너비가 있으면 사용, 없으면 기본값
+        width = saved_col_widths.get(col, cfg["width"])
         # Phase 10-4: Sortable column headers
         app.table.heading(col, text=col, command=lambda c=col: sort_by_column(c))
-        app.table.column(col, width=cfg["width"], minwidth=cfg["width"], anchor=cfg["anchor"])
+        app.table.column(col, width=width, minwidth=40, anchor=cfg["anchor"], stretch=False)
 
     # Phase 9-3: Row color tags
     app.table.tag_configure("buy", background=COLORS["buy"])
@@ -1407,6 +1950,92 @@ def main():
     app.table.tag_configure("strong_sell", background=COLORS["strong_sell"], foreground="white")
     # Phase 11-6: Price change highlight
     app.table.tag_configure("price_changed", background=COLORS["highlight"])
+    # 저유동 경고 태그
+    app.table.tag_configure("low_liquidity", background="#FFFACD")
+    # 보유 종목 표시 태그
+    app.table.tag_configure("has_holding", background="#E3F2FD")
+
+    # 저장된 컬럼 순서 복원
+    saved_col_order = config.config.get("column_order", None)
+    if saved_col_order:
+        # 저장된 순서에 있는 컬럼만 필터링 (삭제/추가된 컬럼 대응)
+        valid_order = [c for c in saved_col_order if c in columns]
+        # 새로 추가된 컬럼은 뒤에 붙임
+        for c in columns:
+            if c not in valid_order:
+                valid_order.append(c)
+        app.table["displaycolumns"] = valid_order
+
+    # 헤더 드래그로 컬럼 순서 이동
+    _drag_state = {"col": None, "indicator": None}
+
+    def _get_display_columns():
+        dc = app.table["displaycolumns"]
+        if dc == ("#all",) or dc == "#all":
+            return list(columns)
+        return list(dc)
+
+    def _header_press(event):
+        region = app.table.identify_region(event.x, event.y)
+        if region != "heading":
+            return
+        col_id = app.table.identify_column(event.x)
+        if not col_id:
+            return
+        col_idx = int(col_id.replace("#", "")) - 1
+        dc = _get_display_columns()
+        if 0 <= col_idx < len(dc):
+            _drag_state["col"] = dc[col_idx]
+            # 드래그 인디케이터 표시
+            indicator = tk.Label(app.table, text=f"  {dc[col_idx]}  ",
+                                 bg="#4A90D9", fg="white", font=FONTS["body"],
+                                 relief=tk.RAISED, padx=4, pady=2)
+            _drag_state["indicator"] = indicator
+
+    def _header_motion(event):
+        if _drag_state["col"] is None:
+            return
+        ind = _drag_state["indicator"]
+        if ind:
+            ind.place(x=event.x - 30, y=event.y - 10)
+
+    def _header_release(event):
+        src_col = _drag_state["col"]
+        ind = _drag_state["indicator"]
+        if ind:
+            ind.destroy()
+        _drag_state["indicator"] = None
+        _drag_state["col"] = None
+        if src_col is None:
+            return
+
+        region = app.table.identify_region(event.x, event.y)
+        if region != "heading":
+            return
+        col_id = app.table.identify_column(event.x)
+        if not col_id:
+            return
+        col_idx = int(col_id.replace("#", "")) - 1
+        dc = _get_display_columns()
+        if col_idx < 0 or col_idx >= len(dc):
+            return
+        dst_col = dc[col_idx]
+        if src_col == dst_col:
+            return
+
+        # 순서 변경
+        dc.remove(src_col)
+        new_idx = dc.index(dst_col)
+        dc.insert(new_idx, src_col)
+        app.table["displaycolumns"] = dc
+
+        # config에 저장
+        config.config["column_order"] = dc
+        config.save_config(config.get_config())
+
+    app.table.bind("<ButtonPress-1>", _header_press, add=True)
+    app.table.bind("<B1-Motion>", _header_motion, add=True)
+    app.table.bind("<ButtonRelease-1>", _header_release, add=True)
 
     # Phase 10-2: Right-click context menu
     app.table.bind("<Button-3>", show_context_menu)
@@ -1434,6 +2063,7 @@ def main():
 
     # Load data
     load_watchlist()
+    app.holdings = holdings_manager.load_holdings()
     refresh_table_once()
 
     # Phase 2-4: Store thread reference
@@ -1442,7 +2072,15 @@ def main():
 
     update_market_status()
 
-    # 뉴스 갱신 시작
+    # 뉴스 갱신 시작 (센티먼트 캐시 포함)
+    _original_update_news = app.news_panel.update_news
+
+    def _update_news_with_cache(news_list):
+        with app.news_lock:
+            app.cached_news_list = news_list or []
+        _original_update_news(news_list)
+
+    app.news_panel.update_news = _update_news_with_cache
     start_news_refresh(app)
 
     splash.destroy()

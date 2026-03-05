@@ -16,6 +16,8 @@ default_config = {
     "view_mode": "short",  # 기본값: short (단기)
     "alert_enabled": True,  # BUY/SELL 알림 on/off
     "hint_shown": False,  # 백테스트 힌트 표시 여부
+    "show_fundamental_columns": True,  # 펀더멘털 지표 컬럼 표시 여부
+    "show_holdings_columns": True,  # 보유 정보 컬럼 표시 여부
     "current": {
         "period": "30d",  # 1분봉의 최대 허용 기간
         "interval": "5m",
@@ -23,7 +25,11 @@ default_config = {
         "ma_cross": {"short": 5, "long": 20},
         "macd": {"short": 6, "long": 13, "signal": 5},  # 빠른 반응용
         "bollinger": {"period": 20, "std_dev_multiplier": 2.0, "use_rebound": False},
-        "momentum_return": {"return_window": 5, "threshold": 0.02}  # 짧은 수익률 판단
+        "momentum_return": {"return_window": 5, "threshold": 0.02},  # 짧은 수익률 판단
+        "adx_period": 14,
+        "adx_filter_enabled": False,
+        "sentiment_enabled": False,
+        "multi_timeframe_enabled": False,
     },
     "settings": {
         "short": {
@@ -58,6 +64,17 @@ default_config = {
         "period": 12,
         "unit": "mo",
         "method": "momentum_signal",
+        "stoploss_enabled": False,
+        "stoploss_pct": 5,
+        "regime_filter": False,
+        "trailing_enabled": False,
+        "trailing_type": "pct",
+        "trailing_param": 5.0,
+        "position_sizing": "full",
+        "risk_per_trade": 2.0,
+        "atr_sizing_multiplier": 2.0,
+        "walk_forward_enabled": False,
+        "walk_forward_train_ratio": 0.7,
     }
 }
 

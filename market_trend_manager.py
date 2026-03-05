@@ -110,20 +110,32 @@ def is_market_open():
     return guess_market_session() == "정규장"
 
 
-def adjust_momentum_based_on_market(macd_signal, ma_signal, bb_signal, rsi_signal):
-    momentum_score = 0
+def adjust_momentum_based_on_market(macd_signal, ma_signal, bb_signal, rsi_signal,
+                                     adx_value=None, sentiment_score=0):
+    """모멘텀 점수 계산.
+    adx_value: ADX 값 (None이면 무시). ADX < 20일 때 MACD/MA 가중치 50% 감소.
+    sentiment_score: 뉴스 센티먼트 점수 (±1 범위로 가중치 반영).
+    """
+    # ADX 기반 가중치 조정
+    macd_w = MACD_WEIGHT
+    ma_w = MA_WEIGHT
+    if adx_value is not None and adx_value < 20:
+        macd_w = MACD_WEIGHT * 0.5
+        ma_w = MA_WEIGHT * 0.5
+
+    momentum_score = 0.0
 
     # MACD
     if "매수" in macd_signal:
-        momentum_score += MACD_WEIGHT
+        momentum_score += macd_w
     elif "매도" in macd_signal:
-        momentum_score -= MACD_WEIGHT
+        momentum_score -= macd_w
 
     # MA
     if "매수" in ma_signal:
-        momentum_score += MA_WEIGHT
+        momentum_score += ma_w
     elif "매도" in ma_signal:
-        momentum_score -= MA_WEIGHT
+        momentum_score -= ma_w
 
     # BB
     if "매수" in bb_signal:
@@ -136,6 +148,10 @@ def adjust_momentum_based_on_market(macd_signal, ma_signal, bb_signal, rsi_signa
         momentum_score += RSI_WEIGHT
     elif "매도" in rsi_signal:
         momentum_score -= RSI_WEIGHT
+
+    # 센티먼트 가중치 (±1)
+    if sentiment_score != 0:
+        momentum_score += max(-1, min(1, sentiment_score))
 
     # 최종 결정
     if momentum_score >= STRONG_BUY_THRESHOLD:
