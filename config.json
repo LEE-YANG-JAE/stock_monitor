@@ -118,7 +118,7 @@
         }
     },
     "backtest": {
-        "period": 2,
+        "period": 5,
         "unit": "y",
         "method": "momentum_signal",
         "stoploss_enabled": false,
@@ -132,7 +132,9 @@
         "atr_sizing_multiplier": 2.0,
         "walk_forward_enabled": false,
         "walk_forward_train_ratio": 0.7,
-        "period_mode": "relative"
+        "period_mode": "relative",
+        "commission_rate": 0.001,
+        "slippage_pct": 0.0005
     },
     "alert_enabled": true,
     "hint_shown": true,
@@ -140,20 +142,28 @@
     "column_widths": {
         "종목명": 150,
         "현재가": 100,
-        "추세 신호": 200,
-        "RSI 신호": 150,
         "수익률": 100,
-        "MACD 신호": 150,
-        "BB 신호": 150,
         "모멘텀 신호": 150,
+        "ADX": 80,
+        "추세 신호": 200,
+        "MACD 신호": 150,
+        "RSI 신호": 150,
+        "BB 신호": 150,
+        "스토캐스틱": 80,
+        "VWAP": 100,
+        "OBV": 70,
+        "거래량": 147,
+        "다이버전스": 80,
+        "변동성": 75,
         "가치 점수": 120,
         "PER": 70,
         "ROE": 70,
         "52주 위치": 80,
-        "거래량": 147,
-        "변동성": 75,
-        "다이버전스": 80,
-        "ADX": 80,
+        "실적발표": 65,
+        "공매도%": 70,
+        "내부자%": 70,
+        "일목균형표": 80,
+        "차트패턴": 80,
         "보유수량": 80,
         "매수가": 90,
         "평가손익": 130
@@ -178,6 +188,14 @@
         "다이버전스",
         "보유수량",
         "매수가",
-        "평가손익"
+        "평가손익",
+        "VWAP",
+        "공매도%",
+        "OBV",
+        "스토캐스틱",
+        "실적발표",
+        "내부자%",
+        "일목균형표",
+        "차트패턴"
     ]
 }

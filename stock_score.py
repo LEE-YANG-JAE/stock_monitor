@@ -17,7 +17,10 @@ StockData = namedtuple('StockData', [
     'rate', 'rate_color', 'macd_signal', 'bb_signal', 'momentum_signal',
     'value_score', 'value_judgment', 'per_value', 'roe_value', 'week52_pct',
     'volume_ratio', 'atr_pct', 'divergence_signal',
-    'liquidity_warning', 'adx_value', 'adx_signal', 'htf_trend'
+    'liquidity_warning', 'adx_value', 'adx_signal', 'htf_trend',
+    'vwap_signal', 'obv_signal', 'stoch_signal',
+    'earnings_dday', 'short_float', 'insider_held',
+    'ichimoku_signal', 'pattern_signal'
 ])
 
 # Phase 7-2: API retry with exponential backoff
@@ -167,6 +170,209 @@ def detect_divergence(historical_data, rsi_values=None, lookback=20):
         pass
 
     return "-"
+
+
+def calculate_vwap(historical_data):
+    """VWAP (Volume Weighted Average Price) 계산.
+    Returns: (vwap_value, signal_text)
+    """
+    try:
+        if 'Volume' not in historical_data.columns or historical_data['Volume'].sum() == 0:
+            return None, ""
+        typical_price = (historical_data['High'] + historical_data['Low'] + historical_data['Close']) / 3
+        cum_tp_vol = (typical_price * historical_data['Volume']).cumsum()
+        cum_vol = historical_data['Volume'].cumsum()
+        vwap = cum_tp_vol / cum_vol
+        last_vwap = vwap.iloc[-1]
+        last_close = historical_data['Close'].iloc[-1]
+        if pd.isna(last_vwap) or last_vwap == 0:
+            return None, ""
+        pct_diff = (last_close - last_vwap) / last_vwap * 100
+        if pct_diff > 1:
+            signal = f"강세 +{pct_diff:.1f}%"
+        elif pct_diff < -1:
+            signal = f"약세 {pct_diff:.1f}%"
+        else:
+            signal = f"중립 {pct_diff:+.1f}%"
+        return round(float(last_vwap), 2), signal
+    except Exception as e:
+        logging.warning(f"[VWAP] Calculation error: {e}")
+        return None, ""
+
+
+def calculate_obv(historical_data):
+    """OBV (On-Balance Volume) 계산 및 추세 판단.
+    Returns: signal_text — OBV 10일MA 대비 변화율(%) + 추세 신호
+    """
+    try:
+        if 'Volume' not in historical_data.columns or len(historical_data) < 10:
+            return ""
+        close = historical_data['Close']
+        volume = historical_data['Volume']
+        obv = pd.Series(0.0, index=close.index)
+        for i in range(1, len(close)):
+            if close.iloc[i] > close.iloc[i - 1]:
+                obv.iloc[i] = obv.iloc[i - 1] + volume.iloc[i]
+            elif close.iloc[i] < close.iloc[i - 1]:
+                obv.iloc[i] = obv.iloc[i - 1] - volume.iloc[i]
+            else:
+                obv.iloc[i] = obv.iloc[i - 1]
+        # OBV 10일 이동평균 추세 비교
+        obv_ma = obv.rolling(10).mean()
+        if pd.isna(obv_ma.iloc[-1]):
+            return ""
+        # OBV vs MA 변화율
+        obv_last = obv.iloc[-1]
+        ma_last = obv_ma.iloc[-1]
+        if abs(ma_last) > 0:
+            obv_pct = (obv_last - ma_last) / abs(ma_last) * 100
+        else:
+            obv_pct = 0.0
+        price_up = close.iloc[-1] > close.iloc[-10]
+        obv_up = obv_last > ma_last
+        if price_up and obv_up:
+            label = "확인↑"
+        elif price_up and not obv_up:
+            label = "괴리↓"
+        elif not price_up and obv_up:
+            label = "반전↑"
+        else:
+            label = "확인↓"
+        return f"{obv_pct:+.1f}% {label}"
+    except Exception as e:
+        logging.warning(f"[OBV] Calculation error: {e}")
+        return ""
+
+
+def calculate_stochastic(historical_data, k_period=14, d_period=3):
+    """Stochastic Oscillator (%K, %D) 계산.
+    Returns: (k_value, d_value, signal_text)
+    """
+    try:
+        if len(historical_data) < k_period + d_period:
+            return None, None, ""
+        low_min = historical_data['Low'].rolling(window=k_period).min()
+        high_max = historical_data['High'].rolling(window=k_period).max()
+        denom = high_max - low_min
+        denom = denom.replace(0, 1e-10)
+        k = (historical_data['Close'] - low_min) / denom * 100
+        d = k.rolling(window=d_period).mean()
+        last_k = k.iloc[-1]
+        last_d = d.iloc[-1]
+        if pd.isna(last_k) or pd.isna(last_d):
+            return None, None, ""
+        k_val = round(float(last_k), 1)
+        d_val = round(float(last_d), 1)
+        kd_text = f"{k_val:.0f}/{d_val:.0f}"
+        if k_val > 80 and k_val < d_val:
+            signal = f"{kd_text} 과매수↓"
+        elif k_val < 20 and k_val > d_val:
+            signal = f"{kd_text} 과매도↑"
+        elif k_val > 80:
+            signal = f"{kd_text} 과매수"
+        elif k_val < 20:
+            signal = f"{kd_text} 과매도"
+        else:
+            signal = kd_text
+        return k_val, d_val, signal
+    except Exception as e:
+        logging.warning(f"[STOCH] Calculation error: {e}")
+        return None, None, ""
+
+
+def calculate_ichimoku(historical_data, tenkan=9, kijun=26, senkou_b=52):
+    """Ichimoku Cloud (일목균형표) 계산.
+    Returns: dict with keys: tenkan_sen, kijun_sen, senkou_a, senkou_b, chikou, signal
+    """
+    try:
+        high = historical_data['High']
+        low = historical_data['Low']
+        close = historical_data['Close']
+
+        if len(historical_data) < senkou_b + kijun:
+            return None
+
+        # Tenkan-sen (전환선): (최고+최저)/2 over tenkan period
+        tenkan_sen = (high.rolling(window=tenkan).max() + low.rolling(window=tenkan).min()) / 2
+        # Kijun-sen (기준선): (최고+최저)/2 over kijun period
+        kijun_sen = (high.rolling(window=kijun).max() + low.rolling(window=kijun).min()) / 2
+        # Senkou Span A (선행스팬A): (tenkan+kijun)/2, shifted forward kijun periods
+        senkou_a = ((tenkan_sen + kijun_sen) / 2).shift(kijun)
+        # Senkou Span B (선행스팬B): (highest+lowest)/2 over senkou_b, shifted forward kijun
+        senkou_b_line = ((high.rolling(window=senkou_b).max() + low.rolling(window=senkou_b).min()) / 2).shift(kijun)
+        # Chikou Span (후행스팬): Close shifted back kijun periods
+        chikou = close.shift(-kijun)
+
+        # Signal generation
+        last_close = close.iloc[-1]
+        last_tenkan = tenkan_sen.iloc[-1]
+        last_kijun = kijun_sen.iloc[-1]
+        # Use current (non-shifted) cloud for signal
+        cur_senkou_a = senkou_a.iloc[-1] if not pd.isna(senkou_a.iloc[-1]) else 0
+        cur_senkou_b = senkou_b_line.iloc[-1] if not pd.isna(senkou_b_line.iloc[-1]) else 0
+        cloud_top = max(cur_senkou_a, cur_senkou_b)
+        cloud_bottom = min(cur_senkou_a, cur_senkou_b)
+
+        if pd.isna(last_tenkan) or pd.isna(last_kijun):
+            signal = ""
+        elif last_close > cloud_top and last_tenkan > last_kijun:
+            signal = "강세↑"
+        elif last_close < cloud_bottom and last_tenkan < last_kijun:
+            signal = "약세↓"
+        elif last_close > cloud_top:
+            signal = "구름위"
+        elif last_close < cloud_bottom:
+            signal = "구름아래"
+        else:
+            signal = "구름내"
+
+        return {
+            'tenkan_sen': tenkan_sen,
+            'kijun_sen': kijun_sen,
+            'senkou_a': senkou_a,
+            'senkou_b': senkou_b_line,
+            'chikou': chikou,
+            'signal': signal,
+        }
+    except Exception as e:
+        logging.warning(f"[ICHIMOKU] Calculation error: {e}")
+        return None
+
+
+def fetch_earnings_dday(ticker_data):
+    """다음 실적 발표일까지 남은 일수 조회.
+    Returns: 'D-N' 형태 문자열 또는 ''
+    """
+    try:
+        from datetime import datetime
+        cal = ticker_data.calendar
+        if cal is None:
+            return ""
+        # yfinance calendar: dict or DataFrame
+        if isinstance(cal, dict):
+            earn_date = cal.get('Earnings Date', [None])[0] if 'Earnings Date' in cal else None
+        elif hasattr(cal, 'columns'):
+            if 'Earnings Date' in cal.columns:
+                earn_date = cal['Earnings Date'].iloc[0]
+            elif len(cal) > 0:
+                earn_date = cal.iloc[0, 0] if cal.shape[1] > 0 else None
+            else:
+                earn_date = None
+        else:
+            return ""
+        if earn_date is None:
+            return ""
+        if hasattr(earn_date, 'date'):
+            earn_date = earn_date.date()
+        elif isinstance(earn_date, str):
+            earn_date = datetime.strptime(earn_date, '%Y-%m-%d').date()
+        today = datetime.now().date()
+        days_left = (earn_date - today).days
+        if days_left < 0:
+            return ""
+        return f"D-{days_left}"
+    except Exception:
+        return ""
 
 
 def calculate_adx(historical_data, period=14):
@@ -337,22 +543,40 @@ def fetch_stock_data(ticker):
         ticker_data = yf.Ticker(ticker)
         auto_set_interval_by_period()
 
+        # SQLite 캐시 사용 시도
+        try:
+            from data_cache import get_cached_history as _cached_hist
+            _use_cache = True
+        except ImportError:
+            _use_cache = False
+
         # custom_mode: start/end 날짜 직접 사용
         if config.config["current"].get("custom_mode"):
             start_date = config.config["current"].get("start_date")
             end_date = config.config["current"].get("end_date")
-            historical_data = ticker_data.history(
-                start=start_date,
-                end=end_date,
-                interval=config.config["current"]["interval"]
-            )
+            if _use_cache:
+                historical_data = _cached_hist(ticker, start=start_date, end=end_date,
+                                               interval=config.config["current"]["interval"])
+            else:
+                historical_data = ticker_data.history(
+                    start=start_date, end=end_date,
+                    interval=config.config["current"]["interval"]
+                )
         elif is_market_open():
-            historical_data = ticker_data.history(
-                period=config.config["current"]["period"],
-                interval=config.config["current"]["interval"]
-            )
+            if _use_cache:
+                historical_data = _cached_hist(ticker,
+                                               period=config.config["current"]["period"],
+                                               interval=config.config["current"]["interval"])
+            else:
+                historical_data = ticker_data.history(
+                    period=config.config["current"]["period"],
+                    interval=config.config["current"]["interval"]
+                )
         else:
-            historical_data = ticker_data.history(period=config.config["current"]["period"])
+            if _use_cache:
+                historical_data = _cached_hist(ticker, period=config.config["current"]["period"])
+            else:
+                historical_data = ticker_data.history(period=config.config["current"]["period"])
 
         if historical_data.empty:
             logging.warning(f"[FETCH] No historical data for {ticker}")
@@ -496,6 +720,35 @@ def fetch_stock_data(ticker):
                    ("매도" in momentum_signal and htf_trend == "UP"):
                     momentum_signal = "관망"
 
+        # VWAP
+        _, vwap_signal = calculate_vwap(historical_data)
+
+        # OBV
+        obv_signal = calculate_obv(historical_data)
+
+        # Stochastic Oscillator
+        _, _, stoch_signal = calculate_stochastic(historical_data)
+
+        # 실적 발표일
+        earnings_dday = fetch_earnings_dday(ticker_data)
+
+        # 공매도 비율 + 내부자 보유
+        short_float = ticker_info.get('shortPercentOfFloat', None)
+        insider_held = ticker_info.get('heldPercentInsiders', None)
+
+        # 일목균형표
+        ichimoku_result = calculate_ichimoku(historical_data)
+        ichimoku_signal = ichimoku_result['signal'] if ichimoku_result else ""
+
+        # 차트 패턴 인식
+        try:
+            from pattern_recognition import get_pattern_summary
+            pattern_signal = get_pattern_summary(historical_data)
+        except ImportError:
+            pattern_signal = "-"
+        except Exception:
+            pattern_signal = "-"
+
         # 펀더멘털 지표 계산 (이미 가져온 ticker_info 재활용)
         fund = calculate_valuation_score(ticker_info)
 
@@ -522,7 +775,15 @@ def fetch_stock_data(ticker):
             liquidity_warning=liquidity_warning,
             adx_value=adx_value,
             adx_signal=adx_signal,
-            htf_trend=htf_trend
+            htf_trend=htf_trend,
+            vwap_signal=vwap_signal,
+            obv_signal=obv_signal,
+            stoch_signal=stoch_signal,
+            earnings_dday=earnings_dday,
+            short_float=short_float,
+            insider_held=insider_held,
+            ichimoku_signal=ichimoku_signal,
+            pattern_signal=pattern_signal
         )
 
     except (ConnectionError, TimeoutError) as e:

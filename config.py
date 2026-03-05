@@ -3,6 +3,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 
 CONFIG_FILE = 'config.json'
 WATCHLIST_FILE = "watchlist.json"
@@ -75,6 +76,8 @@ default_config = {
         "atr_sizing_multiplier": 2.0,
         "walk_forward_enabled": False,
         "walk_forward_train_ratio": 0.7,
+        "commission_rate": 0.001,
+        "slippage_pct": 0.0005,
     }
 }
 
@@ -274,3 +277,40 @@ class _ConfigProxy:
 
 
 config = _ConfigProxy()
+
+
+# ============================================================
+# Dynamic risk-free rate (^TNX 10-year Treasury yield)
+# ============================================================
+_risk_free_rate = None
+_risk_free_rate_time = 0
+_risk_free_rate_lock = threading.Lock()
+_RISK_FREE_CACHE_SECONDS = 3600  # 1시간 캐시
+_RISK_FREE_FALLBACK = 0.045  # 4.5% fallback
+
+
+def get_risk_free_rate():
+    """10년 국채 수익률을 yfinance로 조회 (1시간 캐시). 실패 시 4.5% 폴백."""
+    global _risk_free_rate, _risk_free_rate_time
+    with _risk_free_rate_lock:
+        now = time.time()
+        if _risk_free_rate is not None and (now - _risk_free_rate_time) < _RISK_FREE_CACHE_SECONDS:
+            return _risk_free_rate
+    try:
+        import yfinance as yf
+        tnx = yf.Ticker("^TNX")
+        hist = tnx.history(period="5d")
+        if not hist.empty:
+            rate = float(hist['Close'].iloc[-1]) / 100.0  # ^TNX is in percentage
+            if 0 < rate < 0.20:  # sanity check: 0~20%
+                with _risk_free_rate_lock:
+                    _risk_free_rate = rate
+                    _risk_free_rate_time = time.time()
+                logging.info(f"[CONFIG] Risk-free rate updated: {rate:.4f} ({rate*100:.2f}%)")
+                return rate
+    except Exception as e:
+        logging.warning(f"[CONFIG] Failed to fetch risk-free rate: {e}")
+    with _risk_free_rate_lock:
+        if _risk_free_rate is not None:
+            return _risk_free_rate
+    return _RISK_FREE_FALLBACK

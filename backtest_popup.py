@@ -29,7 +29,7 @@ from ui_components import Tooltip, HelpTooltip
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'Malgun Gothic'
 
-strategy_options = ["ma_cross", "macd", "rsi", "macd_rsi", "bollinger", "momentum_signal", "momentum_return_ma"]
+strategy_options = ["ma_cross", "macd", "rsi", "macd_rsi", "bollinger", "momentum_signal", "momentum_return_ma", "ichimoku"]
 
 # 전략 한글 표시명 매핑
 STRATEGY_DISPLAY_NAMES = {
@@ -40,6 +40,7 @@ STRATEGY_DISPLAY_NAMES = {
     "bollinger": "볼린저 밴드",
     "momentum_signal": "종합 모멘텀",
     "momentum_return_ma": "수익률+MA 교차",
+    "ichimoku": "일목균형표",
 }
 # 표시명→내부값 역매핑
 STRATEGY_DISPLAY_TO_KEY = {v: k for k, v in STRATEGY_DISPLAY_NAMES.items()}
@@ -67,7 +68,18 @@ RETRY_BASE_DELAY = 1
 
 
 def _retry_download(ticker_symbol, start, end):
-    """yf.download with retry logic."""
+    """yf.download with retry logic. Uses SQLite cache when available."""
+    # Try cache first
+    try:
+        from data_cache import get_cached_history
+        data = get_cached_history(ticker_symbol, start=start, end=end, interval="1d")
+        if not data.empty:
+            return data
+    except ImportError:
+        pass
+    except Exception as e:
+        logging.warning(f"[BACKTEST] Cache fallback: {e}")
+
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -95,16 +107,29 @@ def calculate_rsi_for_backtest(series, period=14):
     return rsi
 
 
-COMMISSION_RATE = 0.001  # 0.1% per trade (buy or sell)
+def _get_commission_rate():
+    """config에서 수수료율 조회."""
+    return config.config.get("backtest", {}).get("commission_rate", 0.001)
+
+
+def _get_slippage_pct():
+    """config에서 슬리피지율 조회."""
+    return config.config.get("backtest", {}).get("slippage_pct", 0.0005)
+
+
+# Backward compatibility
+COMMISSION_RATE = 0.001
 
 
 def _safe_division(exit_price, entry_price):
     """Phase 3-6: Safe profit calculation avoiding division by zero.
-    Applies round-trip commission (buy + sell)."""
+    Applies round-trip commission (buy + sell) and slippage."""
     if entry_price > 0:
+        commission = _get_commission_rate()
+        slippage = _get_slippage_pct()
         raw_return = (exit_price - entry_price) / entry_price
-        # Deduct round-trip commission (buy + sell)
-        return raw_return - (COMMISSION_RATE * 2)
+        # Deduct round-trip commission (buy + sell) and slippage (buy + sell)
+        return raw_return - (commission * 2) - (slippage * 2)
     return 0.0
 
 
@@ -238,6 +263,16 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         # 워크포워드 설정 저장
         config.config["backtest"]["walk_forward_enabled"] = walk_forward_var.get()
 
+        # 수수료/슬리피지 저장
+        try:
+            config.config["backtest"]["commission_rate"] = float(commission_var.get()) / 100.0
+        except ValueError:
+            pass
+        try:
+            config.config["backtest"]["slippage_pct"] = float(slippage_var.get()) / 100.0
+        except ValueError:
+            pass
+
         config.save_config(config.get_config())
 
         stoploss = sl_pct / 100.0 if stoploss_enabled_var.get() else None
@@ -289,8 +324,17 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
     # --- Plot functions ---
 
+    # 비교/민감도 실행 중 개별 전략 차트 팝업 억제 플래그
+    _suppress_chart = [False]
+
     def _create_graph_popup(fig, title, help_text=""):
         """Create a Toplevel window with matplotlib figure and save buttons."""
+        if _suppress_chart[0]:
+            try:
+                plt.close(fig)
+            except Exception:
+                pass
+            return None
         # matplotlib 기본 figure manager 창이 뜨지 않도록 제거 (FigureCanvasTkAgg로 직접 임베딩)
         try:
             plt.close(fig)
@@ -299,12 +343,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         open_figures.append(fig)
         graph_popup = tk.Toplevel()
         graph_popup.title(title)
-        # Phase 9-5: Responsive window size
-        sw = graph_popup.winfo_screenwidth()
-        sh = graph_popup.winfo_screenheight()
-        w = int(sw * 0.8)
-        h = int(sh * 0.8)
-        graph_popup.geometry(f"{w}x{h}")
+        graph_popup.state('zoomed')
         graph_popup.minsize(600, 400)
 
         canvas = FigureCanvasTkAgg(fig, master=graph_popup)
@@ -432,8 +471,9 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         total_loss = abs(losing.sum()) if len(losing) > 0 else 0.0
         profit_factor = total_gain / total_loss if total_loss > 0 else float('inf')
 
-        # 샤프비율 (연환산, 무위험수익률 4.5%)
-        risk_free_per_trade = 0.045 / 252  # 일일 무위험수익률 근사
+        # 샤프비율 (연환산, 동적 무위험수익률)
+        risk_free = config.get_risk_free_rate()
+        risk_free_per_trade = risk_free / 252  # 일일 무위험수익률 근사
         if len(profits) >= 2 and profit_series.std() > 0:
             excess_returns = profit_series - risk_free_per_trade
             sharpe = excess_returns.mean() / profit_series.std() * np.sqrt(252)
@@ -486,7 +526,9 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             ("Profit Factor", _fmt_ratio(profit_factor)),
             ("샤프 비율", f"{sharpe:.2f}"),
             ("소르티노 비율", f"{sortino:.2f}"),
-            ("수수료", f"거래당 {COMMISSION_RATE:.1%} (왕복 {COMMISSION_RATE*2:.1%})"),
+            ("수수료", f"거래당 {_get_commission_rate():.2%} (왕복 {_get_commission_rate()*2:.2%})"),
+            ("슬리피지", f"거래당 {_get_slippage_pct():.2%} (왕복 {_get_slippage_pct()*2:.2%})"),
+            ("무위험이자율", f"{risk_free:.2%} (10년 국채)"),
         ]
         if spy_return_text:
             rows.append(("SPY 수익률 (Buy&Hold)", spy_return_text))
@@ -1287,6 +1329,97 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
         return buy_dates, sell_dates, profits
 
+    def plot_ichimoku(data, buy_dates, sell_dates, ticker_name):
+        """Ichimoku Cloud 차트 렌더링."""
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.plot(data.index, data['Close'], label='종가', color='black', linewidth=1)
+        ax.plot(data.index, data['Tenkan'], label='전환선(9)', color='blue', linewidth=0.8, linestyle='--')
+        ax.plot(data.index, data['Kijun'], label='기준선(26)', color='red', linewidth=0.8, linestyle='--')
+
+        # Cloud shading
+        if 'Senkou_A' in data.columns and 'Senkou_B' in data.columns:
+            sa = data['Senkou_A']
+            sb = data['Senkou_B']
+            ax.fill_between(data.index, sa, sb,
+                            where=(sa >= sb), color='green', alpha=0.15, label='양운')
+            ax.fill_between(data.index, sa, sb,
+                            where=(sa < sb), color='red', alpha=0.15, label='음운')
+
+        buy_prices = [data['Close'].get(d, None) for d in buy_dates if d in data.index]
+        sell_prices = [data['Close'].get(d, None) for d in sell_dates if d in data.index]
+        valid_buys = [d for d in buy_dates if d in data.index]
+        valid_sells = [d for d in sell_dates if d in data.index]
+        ax.scatter(valid_buys, buy_prices, marker='^', color='green', s=100, zorder=5, label='매수')
+        ax.scatter(valid_sells, sell_prices, marker='v', color='red', s=100, zorder=5, label='매도')
+
+        ax.set_title(f"{ticker_name} 일목균형표 백테스트", fontsize=12, fontweight='bold')
+        ax.legend(fontsize=8, loc='upper left')
+        ax.grid(alpha=0.3)
+        plt.tight_layout()
+        _create_graph_popup(fig, f"{ticker_name} 일목균형표 백테스트",
+                            CHART_HELP.get("ichimoku", ""))
+
+    def _run_ichimoku(data, close_prices):
+        """일목균형표 전략: 전환선/기준선 교차 + 구름 돌파."""
+        from stock_score import calculate_ichimoku as _calc_ichimoku
+        ichimoku = _calc_ichimoku(data, tenkan=9, kijun=26, senkou_b=52)
+        if ichimoku is None:
+            messagebox.showerror("데이터 없음", "일목균형표 계산에 충분한 데이터가 없습니다.\n기간을 늘려주세요.")
+            return [], [], []
+
+        data['Tenkan'] = ichimoku['tenkan_sen']
+        data['Kijun'] = ichimoku['kijun_sen']
+        data['Senkou_A'] = ichimoku['senkou_a']
+        data['Senkou_B'] = ichimoku['senkou_b']
+
+        buy_dates = []
+        sell_dates = []
+        in_position = False
+        entry_price = 0
+        profits = []
+
+        for i in range(1, len(data)):
+            tenkan_now = data['Tenkan'].iloc[i]
+            kijun_now = data['Kijun'].iloc[i]
+            tenkan_prev = data['Tenkan'].iloc[i - 1]
+            kijun_prev = data['Kijun'].iloc[i - 1]
+            close_now = data['Close'].iloc[i]
+
+            if pd.isna(tenkan_now) or pd.isna(kijun_now):
+                continue
+
+            # Cloud boundaries at current position
+            sa = data['Senkou_A'].iloc[i] if not pd.isna(data['Senkou_A'].iloc[i]) else 0
+            sb = data['Senkou_B'].iloc[i] if not pd.isna(data['Senkou_B'].iloc[i]) else 0
+            cloud_top = max(sa, sb)
+
+            if not in_position:
+                # Buy: Tenkan crosses above Kijun AND price above cloud
+                if tenkan_prev <= kijun_prev and tenkan_now > kijun_now and close_now > cloud_top:
+                    in_position = True
+                    entry_price = close_now
+                    buy_dates.append(data.index[i])
+            else:
+                # Sell: Tenkan crosses below Kijun
+                if tenkan_prev >= kijun_prev and tenkan_now < kijun_now:
+                    exit_price = close_now
+                    profits.append(_safe_division(exit_price, entry_price))
+                    sell_dates.append(data.index[i])
+                    in_position = False
+
+        if in_position:
+            exit_price = data['Close'].iloc[-1]
+            profits.append(_safe_division(exit_price, entry_price))
+
+        if profits:
+            total_return = (1 + pd.Series(profits)).prod() - 1
+            logging.info(f"[Ichimoku] Total return: {total_return:.2%}")
+            plot_ichimoku(data, buy_dates, sell_dates, stock_display)
+        else:
+            messagebox.showerror("데이터 없음", "[일목균형표] 거래 없음. 기간을 늘려주세요.")
+
+        return buy_dates, sell_dates, profits
+
     # Phase 8-1: Strategy dispatch dictionary
     strategy_dispatch = {
         "macd": _run_macd,
@@ -1296,6 +1429,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         "ma_cross": _run_ma_cross,
         "momentum_signal": _run_momentum_signal,
         "momentum_return_ma": _run_momentum_return_ma,
+        "ichimoku": _run_ichimoku,
     }
 
     def _apply_stoploss(data, buy_dates, sell_dates, profits, stoploss_pct):
@@ -1719,12 +1853,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     # --- Popup UI ---
     popup = tk.Toplevel()
     popup.title(f"{stock} 백테스트")
-    # Phase 9-5: Responsive size
-    sw = popup.winfo_screenwidth()
-    sh = popup.winfo_screenheight()
-    pw = min(560, int(sw * 0.4))
-    ph = min(700, int(sh * 0.7))
-    popup.geometry(f"{pw}x{ph}")
+    popup.state('zoomed')
     popup.minsize(400, 450)
 
     # Phase 4-1: Cleanup figures on close
@@ -1771,6 +1900,16 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     def _clear_result_area():
         for widget in result_container.winfo_children():
             widget.destroy()
+
+    def _save_fig_png(fig):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
+            initialfile=f"{ticker_symbol}_backtest.png"
+        )
+        if path:
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            messagebox.showinfo("저장 완료", f"그래프가 저장되었습니다:\n{path}")
 
     # ── 핵심 지표 섹션 ──
     indicator_frame = tk.LabelFrame(_scroll_inner, text="핵심 지표", font=("Arial", 10, "bold"))
@@ -2234,6 +2373,20 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     wf_chk.grid(row=5, column=2, padx=5, pady=3, sticky="w")
     Tooltip(wf_chk, "데이터를 70% 학습 / 30% 검증으로 분할하여\n전략의 과적합 여부를 확인합니다.")
 
+    # 수수료 + 슬리피지 설정
+    commission_var = tk.StringVar(value=str(config.config["backtest"].get("commission_rate", 0.001) * 100))
+    slippage_var = tk.StringVar(value=str(config.config["backtest"].get("slippage_pct", 0.0005) * 100))
+
+    tk.Label(frame, text="수수료(%):").grid(row=6, column=0, padx=5, pady=3, sticky="w")
+    commission_entry = tk.Entry(frame, textvariable=commission_var, width=6)
+    commission_entry.grid(row=6, column=1, padx=5, pady=3, sticky="w")
+    Tooltip(commission_entry, "거래당 수수료율 (%).\n예: 0.1 → 매수/매도 각 0.1%, 왕복 0.2%")
+
+    tk.Label(frame, text="슬리피지(%):").grid(row=6, column=2, padx=5, pady=3, sticky="w")
+    slippage_entry = tk.Entry(frame, textvariable=slippage_var, width=6)
+    slippage_entry.grid(row=6, column=3, padx=5, pady=3, sticky="w")
+    Tooltip(slippage_entry, "체결 시 가격 미끄러짐 (%).\n예: 0.05 → 매수/매도 각 0.05%, 왕복 0.1%")
+
     # Phase 12-3: Strategy description label (STRATEGY_HELP 멀티라인)
     strategy_desc_label = tk.Label(_scroll_inner, text="", font=("Arial", 9), fg="#333333",
                                     justify=tk.LEFT, wraplength=450, anchor="w")
@@ -2253,13 +2406,336 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     search_btn = tk.Button(btn_frame, text="검색 및 분석", command=save_and_search)
     search_btn.pack(side=tk.LEFT, padx=5)
 
+    def _compare_all_strategies():
+        """모든 전략을 동시 실행하여 비교 테이블과 에쿼티 커브 오버레이 표시."""
+        mode = bt_period_mode_var.get()
+        if mode == "absolute":
+            start_str = bt_start_date_entry.get().strip()
+            end_str = bt_end_date_entry.get().strip()
+        else:
+            value_text = period_value_entry.get().strip()
+            if not value_text.isdigit():
+                messagebox.showerror("오류", "기간 숫자를 입력하세요.")
+                return
+            value = int(value_text)
+            unit = _get_unit_key()
+            now = datetime.now()
+            if unit == 'd':
+                start = now - timedelta(days=value)
+            elif unit == 'mo':
+                start = now - timedelta(days=value * 30)
+            elif unit == 'y':
+                start = now - timedelta(days=value * 365)
+            else:
+                start = now
+            start_str = start.strftime('%Y-%m-%d')
+            end_str = now.strftime('%Y-%m-%d')
+
+        search_btn.config(state=tk.DISABLED)
+
+        def _run_compare():
+            try:
+                data = _retry_download(ticker_symbol, start_str, end_str)
+                if isinstance(data.columns, pd.MultiIndex):
+                    data.columns = data.columns.get_level_values(0)
+                if isinstance(data.index, pd.MultiIndex):
+                    data = data.droplevel(0, axis=0)
+                if data.empty:
+                    popup.after(0, lambda: messagebox.showerror("오류", "데이터가 없습니다."))
+                    return
+
+                close_prices = data['Close']
+                results = {}
+                # 비교 실행 중 개별 전략 차트 팝업 억제
+                _suppress_chart[0] = True
+                # 거래가 있는 전략만 비교 (macd, rsi는 시각화 전용이라 제외)
+                compare_strategies = ["macd_rsi", "bollinger", "ma_cross", "momentum_signal", "momentum_return_ma"]
+                for strat_key in compare_strategies:
+                    handler = strategy_dispatch.get(strat_key)
+                    if not handler:
+                        continue
+                    try:
+                        data_copy = data.copy()
+                        bd, sd, profs = handler(data_copy, close_prices.copy())
+                        if profs:
+                            p_series = pd.Series(profs)
+                            total_ret = (1 + p_series).prod() - 1
+                            wins = p_series[p_series > 0]
+                            win_rate = len(wins) / len(p_series) if len(p_series) > 0 else 0
+                            risk_free = config.get_risk_free_rate()
+                            rfpt = risk_free / 252
+                            sharpe_val = 0
+                            if len(p_series) >= 2 and p_series.std() > 0:
+                                sharpe_val = (p_series.mean() - rfpt) / p_series.std() * np.sqrt(252)
+                            # MDD
+                            equity = [1.0]
+                            for p in profs:
+                                equity.append(equity[-1] * (1 + p))
+                            eq = pd.Series(equity)
+                            mdd = ((eq - eq.cummax()) / eq.cummax()).min()
+                            results[strat_key] = {
+                                "total_return": total_ret,
+                                "win_rate": win_rate,
+                                "sharpe": sharpe_val,
+                                "mdd": mdd,
+                                "trades": len(profs),
+                                "equity": equity,
+                                "sell_dates": sd,
+                            }
+                    except Exception as e:
+                        logging.warning(f"[COMPARE] {strat_key} failed: {e}")
+
+                _suppress_chart[0] = False
+
+                def _show_compare():
+                    search_btn.config(state=tk.NORMAL)
+                    if not results:
+                        messagebox.showinfo("알림", "비교 가능한 거래가 없습니다.")
+                        return
+                    _clear_result_area()
+
+                    comp_frame = tk.LabelFrame(result_container, text="모든 전략 비교",
+                                                font=("Arial", 10, "bold"))
+                    comp_frame.pack(fill=tk.X, padx=10, pady=5)
+
+                    header = tk.Frame(comp_frame)
+                    header.pack(fill=tk.X, padx=8, pady=2)
+                    for col_text, col_w in [("전략", 14), ("수익률", 9), ("승률", 8),
+                                             ("샤프", 7), ("MDD", 9), ("거래수", 7)]:
+                        tk.Label(header, text=col_text, font=("Arial", 9, "bold"),
+                                 width=col_w, anchor="center").pack(side=tk.LEFT)
+
+                    best_key = max(results, key=lambda k: results[k]["sharpe"])
+                    for key, res in sorted(results.items(), key=lambda x: -x[1]["sharpe"]):
+                        row = tk.Frame(comp_frame)
+                        row.pack(fill=tk.X, padx=8, pady=1)
+                        name = STRATEGY_DISPLAY_NAMES.get(key, key)
+                        is_best = key == best_key
+                        font_w = ("Arial", 9, "bold") if is_best else ("Arial", 9)
+                        ret_color = "#2E7D32" if res["total_return"] > 0 else "#E74C3C"
+                        tk.Label(row, text=("★ " if is_best else "") + name,
+                                 font=font_w, width=14, anchor="w").pack(side=tk.LEFT)
+                        tk.Label(row, text=f"{res['total_return']:.1%}",
+                                 font=font_w, width=9, fg=ret_color).pack(side=tk.LEFT)
+                        tk.Label(row, text=f"{res['win_rate']:.0%}",
+                                 font=font_w, width=8).pack(side=tk.LEFT)
+                        tk.Label(row, text=f"{res['sharpe']:.2f}",
+                                 font=font_w, width=7).pack(side=tk.LEFT)
+                        tk.Label(row, text=f"{res['mdd']:.1%}",
+                                 font=font_w, width=9, fg="#E74C3C").pack(side=tk.LEFT)
+                        tk.Label(row, text=f"{res['trades']}",
+                                 font=font_w, width=7).pack(side=tk.LEFT)
+
+                    # 에쿼티 커브 오버레이 차트
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    for key, res in results.items():
+                        name = STRATEGY_DISPLAY_NAMES.get(key, key)
+                        eq = res["equity"]
+                        sd = res["sell_dates"]
+                        dates = [close_prices.index[0]]
+                        for d in sd:
+                            dates.append(pd.Timestamp(d))
+                        if len(dates) == len(eq):
+                            ax.plot(dates, eq, label=f"{name} ({res['total_return']:.1%})",
+                                    linewidth=1.5 + (0.5 if key == best_key else 0))
+                        else:
+                            ax.plot(range(len(eq)), eq, label=f"{name} ({res['total_return']:.1%})",
+                                    linewidth=1.5)
+                    ax.axhline(y=1.0, color='gray', linewidth=0.5, linestyle=':')
+                    ax.set_title(f"{stock_display} 전략별 에쿼티 커브 비교", fontsize=12, fontweight="bold")
+                    ax.set_ylabel("누적 수익률")
+                    ax.legend(fontsize=8, loc="upper left")
+                    ax.grid(alpha=0.3)
+                    plt.tight_layout()
+                    # 에쿼티 커브를 result_container 안에 임베딩
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        pass
+                    open_figures.append(fig)
+                    chart_frame = tk.LabelFrame(result_container, text="에쿼티 커브 비교",
+                                                font=("Arial", 10, "bold"))
+                    chart_frame.pack(fill=tk.X, padx=10, pady=5)
+                    canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+                    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                    canvas.draw()
+                    tk.Button(chart_frame, text="PNG 저장",
+                              command=lambda f=fig: _save_fig_png(f)).pack(pady=3)
+
+                popup.after(0, _show_compare)
+            except Exception as e:
+                _suppress_chart[0] = False
+                logging.error(f"[COMPARE] Error: {e}")
+                popup.after(0, lambda: search_btn.config(state=tk.NORMAL))
+
+        threading.Thread(target=_run_compare, daemon=True).start()
+
+    compare_btn = tk.Button(btn_frame, text="모든 전략 비교", command=_compare_all_strategies)
+    compare_btn.pack(side=tk.LEFT, padx=5)
+    Tooltip(compare_btn, "모든 전략을 동시에 실행하여\n수익률/샤프비율/MDD를 비교합니다.")
+
+    def _run_sensitivity_analysis():
+        """현재 전략의 핵심 파라미터를 그리드 탐색하여 수익률 히트맵 표시."""
+        method = _get_method_key()
+        mode = bt_period_mode_var.get()
+        if mode == "absolute":
+            start_str = bt_start_date_entry.get().strip()
+            end_str = bt_end_date_entry.get().strip()
+        else:
+            value_text = period_value_entry.get().strip()
+            if not value_text.isdigit():
+                messagebox.showerror("오류", "기간 숫자를 입력하세요.")
+                return
+            value = int(value_text)
+            unit = _get_unit_key()
+            now = datetime.now()
+            if unit == 'd':
+                start = now - timedelta(days=value)
+            elif unit == 'mo':
+                start = now - timedelta(days=value * 30)
+            else:
+                start = now - timedelta(days=value * 365)
+            start_str = start.strftime('%Y-%m-%d')
+            end_str = now.strftime('%Y-%m-%d')
+
+        search_btn.config(state=tk.DISABLED)
+
+        def _run():
+            try:
+                data = _retry_download(ticker_symbol, start_str, end_str)
+                if isinstance(data.columns, pd.MultiIndex):
+                    data.columns = data.columns.get_level_values(0)
+                if isinstance(data.index, pd.MultiIndex):
+                    data = data.droplevel(0, axis=0)
+                if data.empty:
+                    popup.after(0, lambda: messagebox.showerror("오류", "데이터가 없습니다."))
+                    return
+
+                # 전략별 파라미터 그리드 정의
+                param_grids = {
+                    "rsi": {"lower": [20, 25, 30, 35], "upper": [65, 70, 75, 80]},
+                    "macd_rsi": {"lower": [20, 25, 30, 35], "upper": [65, 70, 75, 80]},
+                    "ma_cross": {"short": [5, 10, 15, 20], "long": [20, 50, 100, 200]},
+                    "bollinger": {"period": [10, 15, 20, 30], "std_dev_multiplier": [1.5, 2.0, 2.5, 3.0]},
+                    "momentum_signal": {"lower": [20, 25, 30, 35], "upper": [65, 70, 75, 80]},
+                    "momentum_return_ma": {"short": [5, 10, 15, 20], "long": [20, 50, 100, 200]},
+                }
+                grid = param_grids.get(method)
+                if not grid:
+                    popup.after(0, lambda: messagebox.showinfo("알림",
+                        f"{STRATEGY_DISPLAY_NAMES.get(method, method)} 전략은 민감도 분석을 지원하지 않습니다."))
+                    return
+
+                import copy as _copy
+                keys = list(grid.keys())
+                vals1 = grid[keys[0]]
+                vals2 = grid[keys[1]]
+                results_grid = np.zeros((len(vals1), len(vals2)))
+
+                # 민감도 분석 중 개별 전략 차트 팝업 억제
+                _suppress_chart[0] = True
+
+                for i, v1 in enumerate(vals1):
+                    for j, v2 in enumerate(vals2):
+                        # MA 교차: short >= long 이면 skip
+                        if keys[0] == "short" and keys[1] == "long" and v1 >= v2:
+                            results_grid[i, j] = np.nan
+                            continue
+                        # RSI: lower >= upper 이면 skip
+                        if keys[0] == "lower" and keys[1] == "upper" and v1 >= v2:
+                            results_grid[i, j] = np.nan
+                            continue
+
+                        saved = _copy.deepcopy(config.config["current"])
+                        try:
+                            # 파라미터 설정
+                            if method in ("rsi", "macd_rsi", "momentum_signal"):
+                                config.config["current"]["rsi"][keys[0]] = v1
+                                config.config["current"]["rsi"][keys[1]] = v2
+                            elif method in ("ma_cross", "momentum_return_ma"):
+                                config.config["current"]["ma_cross"][keys[0]] = v1
+                                config.config["current"]["ma_cross"][keys[1]] = v2
+                            elif method == "bollinger":
+                                config.config["current"]["bollinger"][keys[0]] = v1
+                                config.config["current"]["bollinger"][keys[1]] = v2
+
+                            handler = strategy_dispatch.get(method)
+                            if handler:
+                                data_copy = data.copy()
+                                _, _, profs = handler(data_copy, data['Close'].copy())
+                                if profs:
+                                    total_ret = (1 + pd.Series(profs)).prod() - 1
+                                    results_grid[i, j] = total_ret * 100
+                                else:
+                                    results_grid[i, j] = 0
+                            else:
+                                results_grid[i, j] = np.nan
+                        except Exception:
+                            results_grid[i, j] = np.nan
+                        finally:
+                            for k, v in saved.items():
+                                config.config["current"][k] = v
+
+                _suppress_chart[0] = False
+
+                def _show_heatmap():
+                    search_btn.config(state=tk.NORMAL)
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    im = ax.imshow(results_grid, cmap='RdYlGn', aspect='auto')
+                    ax.set_xticks(range(len(vals2)))
+                    ax.set_yticks(range(len(vals1)))
+                    ax.set_xticklabels([str(v) for v in vals2])
+                    ax.set_yticklabels([str(v) for v in vals1])
+                    ax.set_xlabel(keys[1])
+                    ax.set_ylabel(keys[0])
+
+                    for i in range(len(vals1)):
+                        for j in range(len(vals2)):
+                            val = results_grid[i, j]
+                            if not np.isnan(val):
+                                color = "white" if abs(val) > 15 else "black"
+                                ax.text(j, i, f"{val:.1f}%", ha="center", va="center",
+                                        fontsize=8, color=color, fontweight="bold")
+
+                    fig.colorbar(im, ax=ax, label="수익률 (%)")
+                    name = STRATEGY_DISPLAY_NAMES.get(method, method)
+                    ax.set_title(f"{stock_display} {name} 파라미터 민감도", fontsize=12, fontweight="bold")
+                    plt.tight_layout()
+                    # 히트맵을 result_container 안에 임베딩
+                    _clear_result_area()
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        pass
+                    open_figures.append(fig)
+                    heat_frame = tk.LabelFrame(result_container, text="파라미터 민감도 히트맵",
+                                               font=("Arial", 10, "bold"))
+                    heat_frame.pack(fill=tk.X, padx=10, pady=5)
+                    canvas = FigureCanvasTkAgg(fig, master=heat_frame)
+                    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                    canvas.draw()
+                    tk.Button(heat_frame, text="PNG 저장",
+                              command=lambda f=fig: _save_fig_png(f)).pack(pady=3)
+
+                popup.after(0, _show_heatmap)
+            except Exception as e:
+                _suppress_chart[0] = False
+                logging.error(f"[SENSITIVITY] Error: {e}")
+                popup.after(0, lambda: search_btn.config(state=tk.NORMAL))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    sensitivity_btn = tk.Button(btn_frame, text="민감도 분석", command=_run_sensitivity_analysis)
+    sensitivity_btn.pack(side=tk.LEFT, padx=5)
+    Tooltip(sensitivity_btn, "현재 전략의 핵심 파라미터를\n변경하며 수익률 히트맵을 표시합니다.\n과적합 여부를 시각적으로 확인할 수 있습니다.")
+
     # ── 종목 뉴스 버튼 ──
     def open_ticker_news_popup():
         from news_panel import fetch_ticker_news
 
         news_popup = tk.Toplevel(popup)
         news_popup.title(f"{stock_display} 뉴스")
-        news_popup.geometry("620x500")
+        news_popup.state('zoomed')
         news_popup.transient(popup)
 
         header_label = tk.Label(

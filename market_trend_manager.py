@@ -105,6 +105,63 @@ def guess_market_session():
     return market_status
 
 
+class VolatilityRegimeManager:
+    """VIX 또는 SPY 실현변동성 기반 변동성 레짐 감지."""
+    def __init__(self, refresh_interval=600):
+        self.refresh_interval = refresh_interval
+        self.last_refresh_time = 0
+        self.regime = "Normal"
+        self.vix_value = None
+        self._lock = threading.Lock()
+
+    def detect_regime(self):
+        try:
+            data = yf.Ticker("^VIX").history(period="5d")
+            if not data.empty:
+                vix = float(data['Close'].iloc[-1])
+                self.vix_value = vix
+                if vix < 15:
+                    return "Low"
+                elif vix > 25:
+                    return "High"
+                else:
+                    return "Normal"
+        except Exception as e:
+            logging.warning(f"[VIX] Failed to fetch VIX: {e}")
+        # fallback: SPY 20일 실현변동성
+        try:
+            spy = yf.Ticker("SPY").history(period="1mo")
+            if not spy.empty and len(spy) >= 20:
+                vol = spy['Close'].pct_change().rolling(20).std().iloc[-1] * (252 ** 0.5)
+                self.vix_value = round(vol * 100, 1)
+                if vol < 0.12:
+                    return "Low"
+                elif vol > 0.22:
+                    return "High"
+                else:
+                    return "Normal"
+        except Exception:
+            pass
+        return "Normal"
+
+    def get_regime(self):
+        with self._lock:
+            current_time = time.time()
+            if current_time - self.last_refresh_time > self.refresh_interval:
+                self.regime = self.detect_regime()
+                self.last_refresh_time = current_time
+            return self.regime, self.vix_value
+
+
+# Global singleton
+_volatility_manager = VolatilityRegimeManager()
+
+
+def get_volatility_regime():
+    """현재 변동성 레짐 반환. Returns: (regime_str, vix_value)"""
+    return _volatility_manager.get_regime()
+
+
 def is_market_open():
     """정규장 여부 — guess_market_session() 기반 (Phase 3-11: 중복 로직 통합)"""
     return guess_market_session() == "정규장"

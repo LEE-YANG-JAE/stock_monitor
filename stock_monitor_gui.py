@@ -18,7 +18,7 @@ import copy
 import config
 from backtest_popup import open_backtest_popup
 from help_texts import COLUMN_HELP, SIGNAL_HELP, QUANT_GUIDE
-from market_trend_manager import guess_market_session
+from market_trend_manager import guess_market_session, get_volatility_regime
 from stock_score import fetch_stock_data
 from ui_components import Tooltip, HelpTooltip
 from news_panel import NewsPanel, start_news_refresh
@@ -394,7 +394,7 @@ def open_holdings_edit_dialog(ticker, company_name=""):
     if company_name:
         title += f" ({company_name})"
     popup.title(title)
-    popup.geometry("620x520")
+    popup.state('zoomed')
     popup.grab_set()
     popup.resizable(True, True)
     popup.minsize(550, 400)
@@ -741,7 +741,14 @@ def update_market_status():
     interval = config.config["current"]["interval"]
     start, end = _calc_period_date_range(period)
     period_display = f"{period} ({start} ~ {end})" if start and end else period
-    full_text = f"{status}\n분석기간: {period_display}, 간격: {interval}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
+    # 변동성 레짐
+    vol_regime, vix_val = get_volatility_regime()
+    regime_labels = {"Low": "저변동", "Normal": "보통", "High": "고변동"}
+    regime_text = regime_labels.get(vol_regime, vol_regime)
+    if vix_val is not None:
+        regime_text = f"VIX {vix_val:.1f} ({regime_text})"
+
+    full_text = f"{status} | {regime_text}\n분석기간: {period_display}, 간격: {interval}\n한국 시간: {korea_time}\n미국 시간: {new_york_time}"
 
     app.market_status_label.config(text=full_text)
     app.root.after(1000, update_market_status)
@@ -805,6 +812,14 @@ def update_table(data):
                 liquidity_warning = getattr(record, 'liquidity_warning', '')
                 adx_value = getattr(record, 'adx_value', None)
                 adx_signal = getattr(record, 'adx_signal', '')
+                vwap_signal = getattr(record, 'vwap_signal', '')
+                obv_signal = getattr(record, 'obv_signal', '')
+                stoch_signal = getattr(record, 'stoch_signal', '')
+                earnings_dday = getattr(record, 'earnings_dday', '')
+                short_float = getattr(record, 'short_float', None)
+                insider_held = getattr(record, 'insider_held', None)
+                ichimoku_signal = getattr(record, 'ichimoku_signal', '')
+                pattern_signal = getattr(record, 'pattern_signal', '-')
             else:
                 (name, t, price, trend, rsi, rate, rate_color, macd_signal, bb_signal, momentum_signal) = record[:10]
                 value_score = 'N/A'
@@ -818,6 +833,14 @@ def update_table(data):
                 liquidity_warning = ''
                 adx_value = None
                 adx_signal = ''
+                vwap_signal = ''
+                obv_signal = ''
+                stoch_signal = ''
+                earnings_dday = ''
+                short_float = None
+                insider_held = None
+                ichimoku_signal = ''
+                pattern_signal = '-'
 
             rsi_value = float(rsi.replace('%', ''))
             if rsi_value > config.config['current']['rsi']['upper']:
@@ -867,11 +890,43 @@ def update_table(data):
 
             div_display = divergence_signal if divergence_signal else "-"
 
+            # VWAP 표시
+            vwap_display = vwap_signal if vwap_signal else "-"
+
+            # OBV 표시
+            obv_display = obv_signal if obv_signal else "-"
+
+            # Stochastic 표시
+            stoch_display = stoch_signal if stoch_signal else "-"
+
+            # 실적발표 표시
+            earnings_display = earnings_dday if earnings_dday else "-"
+
+            # 공매도 비율 표시
+            if short_float is not None:
+                sf_pct = short_float * 100 if short_float < 1 else short_float
+                short_display = f"{sf_pct:.1f}%"
+            else:
+                short_display = "-"
+
+            # 내부자 보유 비율 표시
+            if insider_held is not None:
+                ih_pct = insider_held * 100 if insider_held < 1 else insider_held
+                insider_display = f"{ih_pct:.1f}%"
+            else:
+                insider_display = "-"
+
             # ADX 표시
             if adx_value is not None:
                 adx_display = f"{adx_value} {adx_signal}"
             else:
                 adx_display = "N/A"
+
+            # 일목균형표 표시
+            ichimoku_display = ichimoku_signal if ichimoku_signal else "-"
+
+            # 차트 패턴 표시
+            pattern_display = pattern_signal if pattern_signal else "-"
 
             # 보유 정보 표시
             holding = holdings_manager.get_holding(app.holdings, t)
@@ -900,20 +955,28 @@ def update_table(data):
             row_id = app.table.insert("", "end", values=(
                 display_name,
                 price,
-                trend,
-                rsi_display,
                 rate,
-                macd_signal,
-                bb_signal,
                 momentum_signal,
+                adx_display,
+                trend,
+                macd_signal,
+                rsi_display,
+                bb_signal,
+                stoch_display,
+                vwap_display,
+                obv_display,
+                vol_display,
+                div_display,
+                atr_display,
                 value_display,
                 per_display,
                 roe_display,
                 week52_display,
-                vol_display,
-                atr_display,
-                div_display,
-                adx_display,
+                earnings_display,
+                short_display,
+                insider_display,
+                ichimoku_display,
+                pattern_display,
                 qty_display,
                 avg_display,
                 pnl_display
@@ -1015,6 +1078,380 @@ def sort_by_column(col):
 
 
 # ============================================================
+# Technical Chart Popup (Ichimoku Cloud + Chart Patterns)
+# ============================================================
+def show_technical_chart(stock_name):
+    """일목균형표와 차트패턴을 시각화하는 팝업을 엽니다."""
+    import matplotlib
+    matplotlib.use("TkAgg")
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+    import matplotlib.font_manager as fm
+    import yfinance as yf
+    import numpy as np
+    from stock_score import calculate_ichimoku
+    from pattern_recognition import detect_patterns
+
+    # 티커 추출
+    ticker = stock_name.split('(')[-1].split(')')[0].strip()
+    if not ticker:
+        return
+
+    popup = tk.Toplevel(app.root)
+    popup.title(f"기술 차트 — {stock_name}")
+    popup.state('zoomed')
+    popup.minsize(900, 600)
+
+    # 한글 폰트
+    try:
+        font_path = fm.findfont(fm.FontProperties(family="Malgun Gothic"))
+        if font_path:
+            plt.rcParams['font.family'] = fm.FontProperties(fname=font_path).get_name()
+    except Exception:
+        pass
+    plt.rcParams['axes.unicode_minus'] = False
+
+    open_figs = []
+
+    def _on_close():
+        for f in open_figs:
+            try:
+                plt.close(f)
+            except Exception:
+                pass
+        popup.destroy()
+
+    popup.protocol("WM_DELETE_WINDOW", _on_close)
+
+    # 상단: 기간 선택 컨트롤
+    ctrl_frame = tk.LabelFrame(popup, text="기간 설정", font=FONTS["body"])
+    ctrl_frame.pack(fill=tk.X, padx=10, pady=5)
+
+    ctrl_inner = tk.Frame(ctrl_frame)
+    ctrl_inner.pack(fill=tk.X, padx=8, pady=5)
+
+    # 모드 선택: 프리셋 vs 사용자 지정
+    mode_var = tk.StringVar(value="preset")
+
+    # --- 프리셋 모드 ---
+    preset_frame = tk.Frame(ctrl_inner)
+    preset_frame.pack(side=tk.LEFT)
+
+    tk.Radiobutton(preset_frame, text="프리셋", variable=mode_var, value="preset",
+                   font=FONTS["body"], command=lambda: _on_mode_change()
+                   ).pack(side=tk.LEFT)
+
+    period_var = tk.StringVar(value="6mo")
+    period_combo = ttk.Combobox(preset_frame, textvariable=period_var, width=6, state="readonly",
+                                 values=["1mo", "3mo", "6mo", "1y", "2y", "5y"])
+    period_combo.pack(side=tk.LEFT, padx=(5, 0))
+
+    ttk.Separator(ctrl_inner, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=12)
+
+    # --- 사용자 지정 기간 ---
+    custom_period_frame = tk.Frame(ctrl_inner)
+    custom_period_frame.pack(side=tk.LEFT)
+
+    tk.Radiobutton(custom_period_frame, text="기간 지정", variable=mode_var, value="custom_period",
+                   font=FONTS["body"], command=lambda: _on_mode_change()
+                   ).pack(side=tk.LEFT)
+
+    period_num_var = tk.StringVar(value="6")
+    period_num_entry = tk.Entry(custom_period_frame, textvariable=period_num_var, width=4, font=FONTS["body"])
+    period_num_entry.pack(side=tk.LEFT, padx=(5, 2))
+
+    period_unit_var = tk.StringVar(value="mo")
+    period_unit_combo = ttk.Combobox(custom_period_frame, textvariable=period_unit_var, width=4, state="readonly",
+                                      values=["d", "mo", "y"])
+    period_unit_combo.pack(side=tk.LEFT)
+
+    ttk.Separator(ctrl_inner, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=12)
+
+    # --- 날짜 범위 지정 ---
+    date_frame = tk.Frame(ctrl_inner)
+    date_frame.pack(side=tk.LEFT)
+
+    tk.Radiobutton(date_frame, text="날짜 범위", variable=mode_var, value="date_range",
+                   font=FONTS["body"], command=lambda: _on_mode_change()
+                   ).pack(side=tk.LEFT)
+
+    from datetime import date as _date
+    _today = _date.today()
+    _6mo_ago = _today.replace(month=_today.month - 6) if _today.month > 6 else \
+               _today.replace(year=_today.year - 1, month=_today.month + 6)
+
+    tk.Label(date_frame, text="시작:", font=FONTS["small"]).pack(side=tk.LEFT, padx=(5, 2))
+    start_var = tk.StringVar(value=_6mo_ago.strftime("%Y-%m-%d"))
+    start_entry = tk.Entry(date_frame, textvariable=start_var, width=11, font=FONTS["body"])
+    start_entry.pack(side=tk.LEFT)
+
+    tk.Label(date_frame, text="종료:", font=FONTS["small"]).pack(side=tk.LEFT, padx=(8, 2))
+    end_var = tk.StringVar(value=_today.strftime("%Y-%m-%d"))
+    end_entry = tk.Entry(date_frame, textvariable=end_var, width=11, font=FONTS["body"])
+    end_entry.pack(side=tk.LEFT)
+
+    ttk.Separator(ctrl_inner, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=12)
+
+    # --- 조회 버튼 + 상태 ---
+    load_btn = tk.Button(ctrl_inner, text="조회", font=FONTS["body"],
+                          command=lambda: _load_and_draw(), width=6)
+    load_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+    status_label = tk.Label(ctrl_inner, text="", font=FONTS["small"], fg="gray")
+    status_label.pack(side=tk.LEFT)
+
+    def _on_mode_change():
+        mode = mode_var.get()
+        # 프리셋
+        period_combo.config(state="readonly" if mode == "preset" else "disabled")
+        # 사용자 지정 기간
+        state_cp = "normal" if mode == "custom_period" else "disabled"
+        period_num_entry.config(state=state_cp)
+        period_unit_combo.config(state="readonly" if mode == "custom_period" else "disabled")
+        # 날짜 범위
+        state_dr = "normal" if mode == "date_range" else "disabled"
+        start_entry.config(state=state_dr)
+        end_entry.config(state=state_dr)
+
+    _on_mode_change()
+
+    # 탭
+    notebook = ttk.Notebook(popup)
+    notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+    ichimoku_frame = tk.Frame(notebook)
+    pattern_frame = tk.Frame(notebook)
+    notebook.add(ichimoku_frame, text="일목균형표")
+    notebook.add(pattern_frame, text="차트패턴")
+
+    def _clear_frame(frame):
+        for w in frame.winfo_children():
+            w.destroy()
+
+    def _load_and_draw():
+        status_label.config(text="데이터 로딩 중...")
+        popup.update_idletasks()
+
+        mode = mode_var.get()
+
+        # 다운로드 파라미터 결정
+        dl_kwargs = {"progress": False, "interval": "1d"}
+        if mode == "preset":
+            dl_kwargs["period"] = period_var.get()
+        elif mode == "custom_period":
+            try:
+                num = int(period_num_var.get())
+                unit = period_unit_var.get()
+                dl_kwargs["period"] = f"{num}{unit}"
+            except ValueError:
+                status_label.config(text="기간 숫자를 확인하세요")
+                return
+        elif mode == "date_range":
+            dl_kwargs["start"] = start_var.get()
+            dl_kwargs["end"] = end_var.get()
+
+        def _work():
+            try:
+                data = yf.download(ticker, **dl_kwargs)
+                if data is None or len(data) < 30:
+                    popup.after(0, lambda: status_label.config(text="데이터 부족 (최소 30일 필요)"))
+                    return
+                # 멀티레벨 컬럼 처리
+                if hasattr(data.columns, 'levels') and len(data.columns.levels) > 1:
+                    data.columns = data.columns.get_level_values(0)
+                popup.after(0, lambda: _draw_charts(data))
+            except Exception as e:
+                popup.after(0, lambda: status_label.config(text=f"오류: {e}"))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _draw_charts(data):
+        # 기존 figure 정리
+        for f in open_figs:
+            try:
+                plt.close(f)
+            except Exception:
+                pass
+        open_figs.clear()
+
+        _draw_ichimoku(data)
+        _draw_patterns(data)
+        status_label.config(text=f"{ticker} | {len(data)}일 데이터")
+
+    def _draw_ichimoku(data):
+        _clear_frame(ichimoku_frame)
+
+        ichimoku = calculate_ichimoku(data, tenkan=9, kijun=26, senkou_b=52)
+        if ichimoku is None:
+            tk.Label(ichimoku_frame, text="일목균형표 계산에 충분한 데이터가 없습니다.\n기간을 늘려주세요.",
+                     font=FONTS["body"]).pack(expand=True)
+            return
+
+        fig, ax = plt.subplots(figsize=(11, 5.5))
+        open_figs.append(fig)
+
+        dates = data.index
+        close = data['Close'].values
+        tenkan = ichimoku['tenkan_sen'].values
+        kijun = ichimoku['kijun_sen'].values
+        senkou_a = ichimoku['senkou_a'].values
+        senkou_b = ichimoku['senkou_b'].values
+
+        ax.plot(dates, close, label='종가', color='black', linewidth=1.2)
+        ax.plot(dates, tenkan, label='전환선 (9)', color='#2196F3', linewidth=0.9, linestyle='--')
+        ax.plot(dates, kijun, label='기준선 (26)', color='#F44336', linewidth=0.9, linestyle='--')
+
+        # 구름 (양운/음운)
+        sa = ichimoku['senkou_a']
+        sb = ichimoku['senkou_b']
+        ax.fill_between(dates, sa, sb, where=(sa >= sb),
+                         color='#4CAF50', alpha=0.12, label='양운 (상승)')
+        ax.fill_between(dates, sa, sb, where=(sa < sb),
+                         color='#F44336', alpha=0.12, label='음운 (하락)')
+
+        # 후행스팬
+        chikou = ichimoku['chikou']
+        ax.plot(dates, chikou, label='후행스팬', color='#9C27B0', linewidth=0.7, alpha=0.6)
+
+        # 현재 신호 표시
+        signal = ichimoku.get('signal', '')
+        signal_color = '#4CAF50' if '강세' in signal or '구름위' in signal else \
+                       '#F44336' if '약세' in signal or '구름아래' in signal else '#FF9800'
+        ax.set_title(f"{stock_name} 일목균형표  [{signal}]",
+                     fontsize=13, fontweight='bold', color=signal_color)
+
+        ax.legend(fontsize=8, loc='upper left', ncol=3)
+        ax.grid(alpha=0.25)
+        ax.tick_params(labelsize=8)
+        fig.autofmt_xdate(rotation=30)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=ichimoku_frame)
+        canvas.draw()
+        toolbar = NavigationToolbar2Tk(canvas, ichimoku_frame)
+        toolbar.update()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _draw_patterns(data):
+        _clear_frame(pattern_frame)
+
+        patterns = detect_patterns(data, order=10, tolerance=0.03)
+
+        fig, ax = plt.subplots(figsize=(11, 5.5))
+        open_figs.append(fig)
+
+        dates = data.index
+        close = data['Close'].values
+        highs = data['High'].values
+        lows = data['Low'].values
+
+        # 캔들스틱 스타일 (간이 OHLC바)
+        opens = data['Open'].values
+        colors_bar = ['#4CAF50' if c >= o else '#F44336' for c, o in zip(close, opens)]
+        ax.bar(dates, close - opens, bottom=opens, color=colors_bar, width=0.6, alpha=0.6)
+        ax.vlines(dates, lows, highs, colors='gray', linewidth=0.4, alpha=0.5)
+
+        # 종가선
+        ax.plot(dates, close, color='black', linewidth=0.8, alpha=0.5, label='종가')
+
+        # 패턴 시각화
+        pattern_colors = {
+            '더블탑': '#F44336', '더블바텀': '#4CAF50',
+            '헤드앤숄더': '#E91E63', '역헤드앤숄더': '#00BCD4',
+            '상승삼각형': '#8BC34A', '하락삼각형': '#FF5722',
+        }
+        pattern_markers = {
+            '매수': ('^', '#4CAF50'), '매도': ('v', '#F44336'),
+        }
+
+        if patterns:
+            # 패턴 영역 하이라이트 + 주석
+            for i, p in enumerate(patterns[:4]):  # 최대 4개 표시
+                s_idx = p['start_idx']
+                e_idx = min(p['end_idx'], len(dates) - 1)
+                color = pattern_colors.get(p['pattern'], '#FF9800')
+                conf_pct = int(p['confidence'] * 100)
+
+                # 패턴 범위 배경 하이라이트
+                ax.axvspan(dates[s_idx], dates[e_idx], alpha=0.08, color=color)
+
+                # 패턴 핵심 포인트 마커
+                marker, mcolor = pattern_markers.get(p['signal'], ('o', '#FF9800'))
+
+                # 패턴 이름 + 신뢰도 주석
+                mid_idx = (s_idx + e_idx) // 2
+                y_pos = highs[s_idx:e_idx + 1].max() if e_idx > s_idx else highs[s_idx]
+                arrow = '↑' if p['signal'] == '매수' else '↓'
+                label_text = f"{p['pattern']}{arrow} ({conf_pct}%)"
+
+                ax.annotate(label_text,
+                            xy=(dates[mid_idx], y_pos),
+                            xytext=(0, 15 + i * 18),
+                            textcoords='offset points',
+                            fontsize=9, fontweight='bold', color=color,
+                            ha='center',
+                            arrowprops=dict(arrowstyle='->', color=color, lw=1.2),
+                            bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                                      edgecolor=color, alpha=0.85))
+
+                # 패턴 시작/끝점 마커
+                ax.scatter([dates[s_idx], dates[e_idx]],
+                           [close[s_idx], close[e_idx]],
+                           marker=marker, color=mcolor, s=80, zorder=5,
+                           edgecolors='white', linewidths=0.8)
+
+            title_text = f"{stock_name} 차트패턴 — {len(patterns)}개 감지"
+        else:
+            title_text = f"{stock_name} 차트패턴 — 감지된 패턴 없음"
+
+        ax.set_title(title_text, fontsize=13, fontweight='bold')
+        ax.grid(alpha=0.25)
+        ax.tick_params(labelsize=8)
+        fig.autofmt_xdate(rotation=30)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=pattern_frame)
+        canvas.draw()
+        toolbar = NavigationToolbar2Tk(canvas, pattern_frame)
+        toolbar.update()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # 패턴 상세 정보 테이블
+        if patterns:
+            info_frame = tk.LabelFrame(pattern_frame, text="감지된 패턴 상세", font=FONTS["body"])
+            info_frame.pack(fill=tk.X, padx=5, pady=5)
+
+            cols = ("패턴", "신호", "신뢰도", "설명")
+            tree = ttk.Treeview(info_frame, columns=cols, show="headings",
+                                height=min(len(patterns), 5))
+            tree.column("패턴", width=100, anchor="center")
+            tree.column("신호", width=60, anchor="center")
+            tree.column("신뢰도", width=70, anchor="center")
+            tree.column("설명", width=500, anchor="w")
+            for c in cols:
+                tree.heading(c, text=c)
+
+            tree.tag_configure("buy", background="#E8F5E9")
+            tree.tag_configure("sell", background="#FFEBEE")
+
+            for p in patterns:
+                tag = "buy" if p['signal'] == '매수' else "sell"
+                tree.insert("", "end", values=(
+                    p['pattern'],
+                    p['signal'],
+                    f"{int(p['confidence'] * 100)}%",
+                    p['description']
+                ), tags=(tag,))
+            tree.pack(fill=tk.X, padx=5, pady=3)
+
+    # 기간 변경 시 자동 새로고침
+    period_combo.bind("<<ComboboxSelected>>", lambda e: _load_and_draw())
+
+    # 초기 로딩
+    _load_and_draw()
+
+
+# ============================================================
 # Phase 10-2: Context menu
 # ============================================================
 def show_context_menu(event):
@@ -1022,8 +1459,11 @@ def show_context_menu(event):
     row_id = app.table.identify_row(event.y)
     if row_id:
         app.table.selection_set(row_id)
+        stock_name = str(app.table.item(row_id)['values'][0])
         ctx_menu = tk.Menu(app.root, tearoff=0)
         ctx_menu.add_command(label="백테스트 실행", command=lambda: on_item_double_click(None))
+        ctx_menu.add_command(label="기술 차트 (일목균형표 / 차트패턴)",
+                             command=lambda: show_technical_chart(stock_name))
         ctx_menu.add_command(label="보유 정보 편집", command=edit_holding_for_selected)
         ctx_menu.add_command(label="종목 삭제", command=remove_ticker)
         ctx_menu.add_separator()
@@ -1150,7 +1590,7 @@ def open_settings_popup():
     """단기/중기/장기 프리셋 파라미터를 수정할 수 있는 설정 팝업."""
     popup = tk.Toplevel(app.root)
     popup.title("분석 설정")
-    popup.geometry("620x620")
+    popup.state('zoomed')
     popup.minsize(580, 560)
     popup.grab_set()
     popup.protocol("WM_DELETE_WINDOW", lambda: (_cleanup_popup_wheel(), popup.destroy()))
@@ -1577,7 +2017,9 @@ def create_menu_bar(root):
     menubar.add_cascade(label="보기", menu=view_menu)
 
     # Analysis menu
-    from portfolio_analysis import open_correlation_popup, open_portfolio_popup, open_optimization_popup, open_portfolio_evaluation_popup
+    from portfolio_analysis import (open_correlation_popup, open_portfolio_popup,
+                                    open_optimization_popup, open_portfolio_evaluation_popup,
+                                    open_black_litterman_popup, open_fama_french_popup)
     analysis_menu = tk.Menu(menubar, tearoff=0)
     analysis_menu.add_command(label="포트폴리오 평가 (Ctrl+P)",
                               command=lambda: open_portfolio_evaluation_popup(app.watchlist, app.holdings))
@@ -1588,6 +2030,11 @@ def create_menu_bar(root):
                               command=lambda: open_portfolio_popup(app.watchlist, app.holdings))
     analysis_menu.add_command(label="포트폴리오 최적화",
                               command=lambda: open_optimization_popup(app.watchlist, app.holdings))
+    analysis_menu.add_separator()
+    analysis_menu.add_command(label="Black-Litterman 최적화",
+                              command=lambda: open_black_litterman_popup(app.watchlist, app.holdings))
+    analysis_menu.add_command(label="Fama-French 팩터 분석",
+                              command=lambda: open_fama_french_popup(app.watchlist, app.holdings))
     menubar.add_cascade(label="분석", menu=analysis_menu)
 
     # Help menu
@@ -1637,9 +2084,14 @@ def _on_table_heading_motion(event):
         col_id = app.table.identify_column(event.x)
         try:
             col_index = int(col_id.replace("#", "")) - 1
-            columns = app.table["columns"]
-            if 0 <= col_index < len(columns):
-                col_name = columns[col_index]
+            # displaycolumns가 설정된 경우 시각적 순서를 사용해야 함
+            dc = app.table["displaycolumns"]
+            if dc == ("#all",) or dc == "#all":
+                display_cols = list(app.table["columns"])
+            else:
+                display_cols = list(dc)
+            if 0 <= col_index < len(display_cols):
+                col_name = display_cols[col_index]
                 # 정렬 표시 제거
                 col_name = col_name.rstrip(" ▲▼")
                 help_text = COLUMN_HELP.get(col_name, "")
@@ -1680,7 +2132,7 @@ def show_help_window():
     """Help 메뉴에서 전체 용어 설명 창을 띄운다."""
     win = tk.Toplevel(app.root)
     win.title("용어 설명")
-    win.geometry("600x500")
+    win.state('zoomed')
     win.minsize(500, 400)
 
     canvas = tk.Canvas(win)
@@ -1722,7 +2174,7 @@ def show_quant_guide():
     """퀀트 투자 가이드 팝업."""
     win = tk.Toplevel(app.root)
     win.title("퀀트 투자 가이드")
-    win.geometry("650x550")
+    win.state('zoomed')
     win.minsize(550, 450)
 
     canvas = tk.Canvas(win)
@@ -1799,6 +2251,52 @@ def main():
     holdings_btn = tk.Button(button_frame, text="보유 편집", command=edit_holding_for_selected, font=FONTS["body"])
     holdings_btn.pack(side=tk.LEFT, padx=PADDING_MD)
     Tooltip(holdings_btn, "선택 종목 보유 정보 편집")
+
+    def export_to_excel():
+        """테이블 데이터를 엑셀 파일로 내보내기."""
+        from tkinter import filedialog
+        import csv
+
+        # displaycolumns 순서로 헤더 가져오기
+        dc = app.table["displaycolumns"]
+        if dc == ("#all",) or dc == "#all":
+            headers = list(app.table["columns"])
+        else:
+            headers = list(dc)
+
+        rows = []
+        for item in app.table.get_children():
+            all_values = app.table.item(item, "values")
+            # 논리 컬럼 순서 → 이름 매핑
+            logical_cols = list(app.table["columns"])
+            val_map = dict(zip(logical_cols, all_values))
+            # display 순서로 재배열
+            rows.append([val_map.get(h, "") for h in headers])
+
+        if not rows:
+            messagebox.showwarning("내보내기", "내보낼 데이터가 없습니다.")
+            return
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV (Excel 호환)", "*.csv"), ("All files", "*.*")],
+            initialfile=f"stock_monitor_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            messagebox.showinfo("내보내기 완료", f"파일이 저장되었습니다:\n{path}")
+        except Exception as e:
+            messagebox.showerror("내보내기 실패", f"저장 중 오류:\n{e}")
+
+    export_btn = tk.Button(button_frame, text="엑셀 저장", command=export_to_excel, font=FONTS["body"])
+    export_btn.pack(side=tk.LEFT, padx=PADDING_MD)
+    Tooltip(export_btn, "테이블 데이터를 CSV 파일로 저장 (엑셀에서 열기 가능)")
 
     # Radio buttons with LabelFrame (Phase 9-4)
     app.radio_var = tk.StringVar(value=config.config["view_mode"])
@@ -1888,16 +2386,37 @@ def main():
         custom_date_frame.pack(after=radio_label_frame, pady=(0, PADDING_SM), padx=PADDING_MD)
 
     # PanedWindow: 테이블 + 뉴스 패널
+    # 마우스 조작 안내 (그리드 바로 위, 오른쪽 정렬 3줄)
+    hint_frame = tk.Frame(root)
+    hint_frame.pack(fill=tk.X, padx=PADDING_MD, pady=(0, 2))
+    hint_inner = tk.Frame(hint_frame)
+    hint_inner.pack(side=tk.RIGHT)
+    for hint_text in [
+        "\u25B6 클릭: 종목 선택",
+        "\u25B6 더블클릭: 백테스트 실행",
+        "\u25B6 우클릭: 컨텍스트 메뉴",
+    ]:
+        tk.Label(
+            hint_inner, text=hint_text,
+            font=("Arial", 9, "bold"), fg="#4A90D9", anchor="e"
+        ).pack(anchor="e")
+
     paned = tk.PanedWindow(root, orient=tk.VERTICAL, sashwidth=6, sashrelief=tk.RAISED)
-    paned.pack(fill=tk.BOTH, expand=True, padx=PADDING_MD, pady=PADDING_MD)
+    paned.pack(fill=tk.BOTH, expand=True, padx=PADDING_MD, pady=(0, PADDING_MD))
 
     # Table frame with grid resize (Phase 9-6)
     table_frame = tk.Frame(paned)
     table_frame.grid_rowconfigure(0, weight=1)
     table_frame.grid_columnconfigure(0, weight=1)
 
-    columns = ("종목명", "현재가", "추세 신호", "RSI 신호", "수익률", "MACD 신호", "BB 신호", "모멘텀 신호",
-               "가치 점수", "PER", "ROE", "52주 위치", "거래량", "변동성", "다이버전스", "ADX",
+    # 퀀트 가이드 권장 흐름: ADX추세확인 → MACD/MA → RSI/BB/스토캐스틱 → 거래량검증
+    columns = ("종목명", "현재가", "수익률", "모멘텀 신호",
+               "ADX", "추세 신호", "MACD 신호",
+               "RSI 신호", "BB 신호", "스토캐스틱",
+               "VWAP", "OBV", "거래량",
+               "다이버전스", "변동성",
+               "가치 점수", "PER", "ROE", "52주 위치", "실적발표", "공매도%", "내부자%",
+               "일목균형표", "차트패턴",
                "보유수량", "매수가", "평가손익")
     app.table = ttk.Treeview(table_frame, columns=columns, show="headings")
     vsb = ttk.Scrollbar(table_frame, orient="vertical", command=app.table.yview)
@@ -1926,6 +2445,14 @@ def main():
         "변동성": {"width": 75, "anchor": "center"},
         "다이버전스": {"width": 80, "anchor": "center"},
         "ADX": {"width": 80, "anchor": "center"},
+        "VWAP": {"width": 100, "anchor": "center"},
+        "OBV": {"width": 70, "anchor": "center"},
+        "스토캐스틱": {"width": 80, "anchor": "center"},
+        "실적발표": {"width": 65, "anchor": "center"},
+        "공매도%": {"width": 70, "anchor": "e"},
+        "내부자%": {"width": 70, "anchor": "e"},
+        "일목균형표": {"width": 80, "anchor": "center"},
+        "차트패턴": {"width": 80, "anchor": "center"},
         "보유수량": {"width": 80, "anchor": "e"},
         "매수가": {"width": 90, "anchor": "e"},
         "평가손익": {"width": 130, "anchor": "e"},
