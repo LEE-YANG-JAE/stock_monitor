@@ -17,6 +17,7 @@ a = Analysis(
                     'tkcalendar', 'babel', 'babel.numbers',
                     'scipy', 'scipy.optimize', 'scipy.signal',
                     'data_cache', 'pattern_recognition',
+                    'quant_screener', 'screener_popup', 'stock_universe',
                     ],
     hookspath=[],
     runtime_hooks=[],

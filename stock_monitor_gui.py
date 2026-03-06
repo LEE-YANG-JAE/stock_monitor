@@ -675,17 +675,32 @@ def load_watchlist():
 def refresh_table_once():
     """Fetch data for all tickers and update table."""
     try:
-        update_status_bar("데이터 로딩 중...")  # Phase 11-2
+        def _status(msg=None, **kwargs):
+            """Thread-safe status bar update."""
+            if threading.current_thread() is threading.main_thread():
+                update_status_bar(msg, **kwargs)
+            else:
+                app.root.after(0, lambda: update_status_bar(msg, **kwargs))
 
         results = []
+        completed = [0]  # mutable counter for closure
+
+        with app.watchlist_lock:
+            tickers = list(app.watchlist)
+        total = len(tickers)
+
+        def _combined_status():
+            news_status = getattr(app, '_news_loading_status', '')
+            stock_part = f"주식 데이터: {completed[0]}/{total}"
+            combined = f"{stock_part} | {news_status}" if news_status else stock_part
+            _status(combined)
+
+        _combined_status() if total else _status("워치리스트가 비어 있습니다")
 
         def fetch_and_collect(t):
             result = fetch_stock_data(t)
             if result:
                 results.append(result)
-
-        with app.watchlist_lock:
-            tickers = list(app.watchlist)
 
         # Phase 4-2: Reuse executor
         futures = [app.executor.submit(fetch_and_collect, t) for t in tickers]
@@ -694,13 +709,21 @@ def refresh_table_once():
                 f.result(timeout=30)
             except Exception as e:
                 logging.error(f"[FETCH] Thread error: {e}")
+            completed[0] += 1
+            _combined_status()
 
-        update_table(results)
-        app.last_refresh_time = datetime.now()
-        update_status_bar()
+        def _do_ui_update():
+            update_table(results)
+            app.last_refresh_time = datetime.now()
+            update_status_bar()
+
+        if threading.current_thread() is threading.main_thread():
+            _do_ui_update()
+        else:
+            app.root.after(0, _do_ui_update)
     except Exception as e:
         logging.error(f"[REFRESH] refresh_table_once error: {e}")
-        update_status_bar(f"갱신 오류: {e}")
+        _status(f"갱신 오류: {e}")
 
 
 def monitor_stocks():
@@ -1278,6 +1301,30 @@ def show_technical_chart(stock_name):
         _draw_patterns(data)
         status_label.config(text=f"{ticker} | {len(data)}일 데이터")
 
+    def _bind_scroll_zoom(fig, ax, canvas):
+        """마우스 스크롤로 차트 줌 인/아웃 + 우클릭 드래그로 팬."""
+        import matplotlib.dates as mdates
+
+        def _on_scroll(event):
+            if event.inaxes != ax:
+                return
+            scale = 0.8 if event.button == 'up' else 1.25
+            xlim = mdates.date2num(ax.get_xlim())
+            ylim = ax.get_ylim()
+            xdata = event.xdata  # 이미 float (날짜 숫자)
+            ydata = event.ydata
+
+            new_xmin = xdata - (xdata - xlim[0]) * scale
+            new_xmax = xdata + (xlim[1] - xdata) * scale
+            new_ymin = ydata - (ydata - ylim[0]) * scale
+            new_ymax = ydata + (ylim[1] - ydata) * scale
+
+            ax.set_xlim(mdates.num2date(new_xmin), mdates.num2date(new_xmax))
+            ax.set_ylim(new_ymin, new_ymax)
+            canvas.draw_idle()
+
+        fig.canvas.mpl_connect('scroll_event', _on_scroll)
+
     def _draw_ichimoku(data):
         _clear_frame(ichimoku_frame)
 
@@ -1331,6 +1378,7 @@ def show_technical_chart(stock_name):
         toolbar = NavigationToolbar2Tk(canvas, ichimoku_frame)
         toolbar.update()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        _bind_scroll_zoom(fig, ax, canvas)
 
     def _draw_patterns(data):
         _clear_frame(pattern_frame)
@@ -1404,6 +1452,13 @@ def show_technical_chart(stock_name):
         else:
             title_text = f"{stock_name} 차트패턴 — 감지된 패턴 없음"
 
+        # 전체 범위 저장 (선택 해제 시 복원용)
+        full_xlim = (dates[0], dates[-1])
+        price_min = lows.min()
+        price_max = highs.max()
+        price_margin = (price_max - price_min) * 0.05
+        full_ylim = (price_min - price_margin, price_max + price_margin)
+
         ax.set_title(title_text, fontsize=13, fontweight='bold')
         ax.grid(alpha=0.25)
         ax.tick_params(labelsize=8)
@@ -1415,37 +1470,129 @@ def show_technical_chart(stock_name):
         toolbar = NavigationToolbar2Tk(canvas, pattern_frame)
         toolbar.update()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        _bind_scroll_zoom(fig, ax, canvas)
+
+        # 선택 하이라이트용 아티스트 추적
+        _highlight_artists = []
+
+        def _clear_highlight():
+            for artist in _highlight_artists:
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+            _highlight_artists.clear()
+
+        def _focus_pattern(p_idx):
+            """테이블에서 클릭한 패턴 영역으로 차트 줌 + 강조."""
+            _clear_highlight()
+            p = patterns[p_idx]
+            s_idx = p['start_idx']
+            e_idx = min(p['end_idx'], len(dates) - 1)
+            color = pattern_colors.get(p['pattern'], '#FF9800')
+
+            # 패턴 범위 전후로 여유 (전체의 15%)
+            margin = max(int((e_idx - s_idx) * 0.5), 10)
+            view_start = max(0, s_idx - margin)
+            view_end = min(len(dates) - 1, e_idx + margin)
+
+            # X축 줌
+            import matplotlib.dates as mdates
+            ax.set_xlim(dates[view_start], dates[view_end])
+
+            # Y축 맞춤
+            view_lows = lows[view_start:view_end + 1]
+            view_highs = highs[view_start:view_end + 1]
+            y_min = view_lows.min()
+            y_max = view_highs.max()
+            y_margin = (y_max - y_min) * 0.12
+            ax.set_ylim(y_min - y_margin, y_max + y_margin)
+
+            # 패턴 영역 강조 (진한 배경)
+            span = ax.axvspan(dates[s_idx], dates[e_idx], alpha=0.25, color=color, zorder=0)
+            _highlight_artists.append(span)
+
+            # 시작/끝 수직선
+            for idx in [s_idx, e_idx]:
+                vl = ax.axvline(dates[idx], color=color, linewidth=1.5, linestyle='--', alpha=0.7)
+                _highlight_artists.append(vl)
+
+            # 시작/끝 날짜 라벨
+            s_label = ax.text(dates[s_idx], y_max + y_margin * 0.3,
+                              dates[s_idx].strftime('%Y-%m-%d'),
+                              fontsize=8, color=color, ha='center', fontweight='bold',
+                              bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
+                                        edgecolor=color, alpha=0.9))
+            e_label = ax.text(dates[e_idx], y_max + y_margin * 0.3,
+                              dates[e_idx].strftime('%Y-%m-%d'),
+                              fontsize=8, color=color, ha='center', fontweight='bold',
+                              bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
+                                        edgecolor=color, alpha=0.9))
+            _highlight_artists.extend([s_label, e_label])
+
+            canvas.draw_idle()
+
+        def _reset_view():
+            """전체 범위로 복원."""
+            _clear_highlight()
+            ax.set_xlim(full_xlim)
+            ax.set_ylim(full_ylim)
+            canvas.draw_idle()
 
         # 패턴 상세 정보 테이블
         if patterns:
-            info_frame = tk.LabelFrame(pattern_frame, text="감지된 패턴 상세", font=FONTS["body"])
+            info_frame = tk.LabelFrame(pattern_frame, text="감지된 패턴 상세 (클릭하면 차트에서 위치 표시)",
+                                       font=FONTS["body"])
             info_frame.pack(fill=tk.X, padx=5, pady=5)
 
-            cols = ("패턴", "신호", "신뢰도", "설명")
+            cols = ("패턴", "신호", "신뢰도", "기간", "설명")
             tree = ttk.Treeview(info_frame, columns=cols, show="headings",
                                 height=min(len(patterns), 5))
             tree.column("패턴", width=100, anchor="center")
             tree.column("신호", width=60, anchor="center")
             tree.column("신뢰도", width=70, anchor="center")
-            tree.column("설명", width=500, anchor="w")
+            tree.column("기간", width=180, anchor="center")
+            tree.column("설명", width=400, anchor="w")
             for c in cols:
                 tree.heading(c, text=c)
 
             tree.tag_configure("buy", background="#E8F5E9")
             tree.tag_configure("sell", background="#FFEBEE")
+            tree.tag_configure("selected_buy", background="#A5D6A7")
+            tree.tag_configure("selected_sell", background="#EF9A9A")
 
-            for p in patterns:
+            _pattern_index_map = {}
+            for i, p in enumerate(patterns):
+                s_idx = p['start_idx']
+                e_idx = min(p['end_idx'], len(dates) - 1)
+                date_range = f"{dates[s_idx].strftime('%Y-%m-%d')} ~ {dates[e_idx].strftime('%Y-%m-%d')}"
                 tag = "buy" if p['signal'] == '매수' else "sell"
-                tree.insert("", "end", values=(
+                iid = tree.insert("", "end", values=(
                     p['pattern'],
                     p['signal'],
                     f"{int(p['confidence'] * 100)}%",
+                    date_range,
                     p['description']
                 ), tags=(tag,))
+                _pattern_index_map[iid] = i
+
+            def _on_tree_select(event):
+                sel = tree.selection()
+                if sel:
+                    iid = sel[0]
+                    p_idx = _pattern_index_map.get(iid)
+                    if p_idx is not None:
+                        _focus_pattern(p_idx)
+                else:
+                    _reset_view()
+
+            tree.bind("<<TreeviewSelect>>", _on_tree_select)
             tree.pack(fill=tk.X, padx=5, pady=3)
 
-    # 기간 변경 시 자동 새로고침
-    period_combo.bind("<<ComboboxSelected>>", lambda e: _load_and_draw())
+            # 전체 보기 버튼
+            tk.Button(info_frame, text="전체 보기", font=FONTS["small"],
+                      command=lambda: (tree.selection_remove(*tree.selection()), _reset_view())
+                      ).pack(pady=(0, 3))
 
     # 초기 로딩
     _load_and_draw()
@@ -2035,6 +2182,10 @@ def create_menu_bar(root):
                               command=lambda: open_black_litterman_popup(app.watchlist, app.holdings))
     analysis_menu.add_command(label="Fama-French 팩터 분석",
                               command=lambda: open_fama_french_popup(app.watchlist, app.holdings))
+    analysis_menu.add_separator()
+    from screener_popup import open_screener_popup
+    analysis_menu.add_command(label="퀀트 종목 스크리너 (Ctrl+Shift+S)",
+                              command=lambda: open_screener_popup(app_state=app))
     menubar.add_cascade(label="분석", menu=analysis_menu)
 
     # Help menu
@@ -2072,6 +2223,8 @@ def bind_shortcuts(root):
     from portfolio_analysis import open_portfolio_evaluation_popup
     root.bind("<Control-p>", lambda e: open_portfolio_evaluation_popup(app.watchlist, app.holdings))
     root.bind("<Control-P>", lambda e: open_portfolio_evaluation_popup(app.watchlist, app.holdings))
+    root.bind("<Control-Shift-s>", lambda e: open_screener_popup(app_state=app))
+    root.bind("<Control-Shift-S>", lambda e: open_screener_popup(app_state=app))
 
 
 # ============================================================
@@ -2588,30 +2741,43 @@ def main():
     app.save_watchlist = save_watchlist
     app.refresh_table_once = refresh_table_once
 
-    # Load data
+    # Load watchlist & holdings (fast, local file I/O only)
     load_watchlist()
     app.holdings = holdings_manager.load_holdings()
-    refresh_table_once()
-
-    # Phase 2-4: Store thread reference
-    app.monitor_thread = threading.Thread(target=monitor_stocks, daemon=True)
-    app.monitor_thread.start()
-
     update_market_status()
 
-    # 뉴스 갱신 시작 (센티먼트 캐시 포함)
-    _original_update_news = app.news_panel.update_news
-
-    def _update_news_with_cache(news_list):
-        with app.news_lock:
-            app.cached_news_list = news_list or []
-        _original_update_news(news_list)
-
-    app.news_panel.update_news = _update_news_with_cache
-    start_news_refresh(app)
-
+    # 윈도우 즉시 표시 (빈 테이블)
     splash.destroy()
     root.deiconify()
+    update_status_bar("데이터 로딩 중...")
+
+    def _deferred_initial_load():
+        """윈도우 표시 후 주식 데이터와 뉴스를 병렬로 로드."""
+        # 뉴스 로딩 상태 초기화
+        app._news_loading_status = "뉴스: 로딩 중..."
+
+        # 1) 주식 데이터 — 백그라운드 스레드
+        def _fetch_stocks():
+            refresh_table_once()
+            # 데이터 로드 완료 후 모니터 스레드 시작
+            app.monitor_thread = threading.Thread(target=monitor_stocks, daemon=True)
+            app.monitor_thread.start()
+
+        threading.Thread(target=_fetch_stocks, daemon=True).start()
+
+        # 2) 뉴스 갱신 시작 (센티먼트 캐시 포함)
+        _original_update_news = app.news_panel.update_news
+
+        def _update_news_with_cache(news_list):
+            with app.news_lock:
+                app.cached_news_list = news_list or []
+            app._news_loading_status = ''  # 뉴스 로딩 완료
+            _original_update_news(news_list)
+
+        app.news_panel.update_news = _update_news_with_cache
+        start_news_refresh(app)
+
+    root.after(100, _deferred_initial_load)
     root.mainloop()
 
 

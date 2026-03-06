@@ -735,8 +735,12 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             fg = "#E74C3C" if "손실" in label_text or "MDD" in label_text else "#000"
             tk.Label(row_frame, text=value_text, font=("Arial", 9, "bold"), anchor="e", fg=fg).pack(side=tk.RIGHT)
 
-        # 분포 차트
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+        # 분포 차트 (result_container 내 임베드)
+        chart_frame = tk.LabelFrame(result_container, text="몬테카를로 분포 차트",
+                                     font=("Arial", 10, "bold"))
+        chart_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.5))
 
         # 수익률 분포
         ax1.hist(sim_returns * 100, bins=50, color="#4A90D9", alpha=0.7, edgecolor="white")
@@ -757,10 +761,11 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         ax2.set_ylabel("빈도")
         ax2.legend(fontsize=8)
 
-        plt.tight_layout()
-        _create_graph_popup(fig, f"{ticker_symbol} 몬테카를로 시뮬레이션",
-                            "거래 수익률을 1,000회 무작위 재추출하여 전략의 통계적 신뢰도를 평가합니다.\n"
-                            "주황선=실제 결과, 녹색선=시뮬레이션 평균, 빨간 점선=손익분기")
+        fig.tight_layout()
+        open_figures.append(fig)
+        canvas_mc = FigureCanvasTkAgg(fig, master=chart_frame)
+        canvas_mc.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        canvas_mc.draw()
 
     def _save_trades_csv(buy_dates, sell_dates, profits):
         """Phase 12-1: Export trade history as CSV."""

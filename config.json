@@ -1,7 +1,7 @@
 {
     "view_mode": "long",
     "current": {
-        "period": "5y",
+        "period": "2y",
         "interval": "1d",
         "rsi": {
             "period": 14,
@@ -90,7 +90,7 @@
             }
         },
         "long": {
-            "period": "5y",
+            "period": "2y",
             "interval": "1d",
             "rsi": {
                 "period": 14,
@@ -120,7 +120,7 @@
     "backtest": {
         "period": 5,
         "unit": "y",
-        "method": "momentum_signal",
+        "method": "momentum_return_ma",
         "stoploss_enabled": false,
         "stoploss_pct": 5.0,
         "regime_filter": false,
@@ -197,5 +197,19 @@
         "내부자%",
         "일목균형표",
         "차트패턴"
-    ]
+    ],
+    "screener": {
+        "last_universe": "다우 30",
+        "last_strategy": "buffett",
+        "top_n": 50,
+        "min_market_cap_billions": 1.0,
+        "multifactor_weights": {
+            "value": 25,
+            "quality": 25,
+            "growth": 20,
+            "momentum": 15,
+            "dividend": 15
+        },
+        "max_workers": 8
+    }
 }

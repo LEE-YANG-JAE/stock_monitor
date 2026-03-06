@@ -78,6 +78,14 @@ default_config = {
         "walk_forward_train_ratio": 0.7,
         "commission_rate": 0.001,
         "slippage_pct": 0.0005,
+    },
+    "screener": {
+        "last_universe": "S&P 500",
+        "last_strategy": "buffett",
+        "top_n": 50,
+        "min_market_cap_billions": 1.0,
+        "multifactor_weights": {"value": 25, "quality": 25, "growth": 20, "momentum": 15, "dividend": 15},
+        "max_workers": 8,
     }
 }
 
