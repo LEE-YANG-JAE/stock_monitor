@@ -1,0 +1,13 @@
+{
+    "TSLA": {
+        "transactions": [
+            {
+                "type": "buy",
+                "quantity": 6.0,
+                "price": 379.56,
+                "date": "2025-02-20",
+                "notes": "기존 데이터 마이그레이션"
+            }
+        ]
+    }
+}

@@ -118,9 +118,9 @@
         }
     },
     "backtest": {
-        "period": 5,
+        "period": 3,
         "unit": "y",
-        "method": "momentum_return_ma",
+        "method": "momentum_signal",
         "stoploss_enabled": false,
         "stoploss_pct": 5.0,
         "regime_filter": false,
@@ -134,7 +134,9 @@
         "walk_forward_train_ratio": 0.7,
         "period_mode": "relative",
         "commission_rate": 0.001,
-        "slippage_pct": 0.0005
+        "slippage_pct": 0.0005,
+        "start_date": "2024-03-01",
+        "end_date": "2026-03-06"
     },
     "alert_enabled": true,
     "hint_shown": true,
