@@ -1,9 +1,11 @@
+import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modules'))
+
 import glob
 import json
 import logging
-import os
 import re
-import sys
 import threading
 import time
 import tkinter as tk
@@ -301,30 +303,47 @@ def add_ticker():
         messagebox.showwarning("입력 오류", msg)
         return
 
-    try:
-        import yfinance as yf
-        ticker_info = yf.Ticker(name_or_ticker).info
-        company_name = ticker_info.get('shortName')
-        if company_name:
-            with app.watchlist_lock:  # Phase 2-1
-                if name_or_ticker not in app.watchlist:
-                    app.watchlist.append(name_or_ticker)
-                    save_watchlist()
-                    logging.info(f"[STOCK] {company_name} ({name_or_ticker}) added")
-                    messagebox.showinfo("추가 완료", f"{company_name} ({name_or_ticker}) 추가되었습니다.")
-                    refresh_table_once()
-                    if messagebox.askyesno("보유 정보", f"{company_name}의 보유 정보를 입력하시겠습니까?"):
-                        open_holdings_edit_dialog(name_or_ticker, company_name)
+    update_status_bar("종목 추가 중...")
+
+    def _do_add():
+        try:
+            import yfinance as yf
+            ticker_info = yf.Ticker(name_or_ticker).info
+            company_name = ticker_info.get('shortName')
+
+            def _on_result():
+                if company_name:
+                    with app.watchlist_lock:
+                        if name_or_ticker not in app.watchlist:
+                            app.watchlist.append(name_or_ticker)
+                            save_watchlist()
+                            logging.info(f"[STOCK] {company_name} ({name_or_ticker}) added")
+                            messagebox.showinfo("추가 완료", f"{company_name} ({name_or_ticker}) 추가되었습니다.")
+                            threading.Thread(target=refresh_table_once, daemon=True).start()
+                            if messagebox.askyesno("보유 정보", f"{company_name}의 보유 정보를 입력하시겠습니까?"):
+                                open_holdings_edit_dialog(name_or_ticker, company_name)
+                        else:
+                            messagebox.showinfo("중복", f"{company_name} ({name_or_ticker})는 이미 감시 중입니다.")
                 else:
-                    messagebox.showinfo("중복", f"{company_name} ({name_or_ticker})는 이미 감시 중입니다.")
-        else:
-            messagebox.showwarning("검색 실패", f"{name_or_ticker}에 대한 정보를 찾을 수 없습니다.")
-    except (ConnectionError, TimeoutError) as e:
-        logging.error(f"[STOCK] Network error adding {name_or_ticker}: {e}")
-        messagebox.showwarning("네트워크 오류", f"네트워크 연결을 확인하세요.\n{e}")
-    except Exception as e:
-        logging.error(f"[STOCK] Error adding {name_or_ticker}: {e}")
-        messagebox.showwarning("검색 실패", f"{name_or_ticker} 정보를 가져오는 중 오류가 발생했습니다.")
+                    messagebox.showwarning("검색 실패", f"{name_or_ticker}에 대한 정보를 찾을 수 없습니다.")
+                update_status_bar()
+
+            app.root.after(0, _on_result)
+
+        except (ConnectionError, TimeoutError) as e:
+            logging.error(f"[STOCK] Network error adding {name_or_ticker}: {e}")
+            app.root.after(0, lambda: [
+                messagebox.showwarning("네트워크 오류", f"네트워크 연결을 확인하세요.\n{e}"),
+                update_status_bar()
+            ])
+        except Exception as e:
+            logging.error(f"[STOCK] Error adding {name_or_ticker}: {e}")
+            app.root.after(0, lambda: [
+                messagebox.showwarning("검색 실패", f"{name_or_ticker} 정보를 가져오는 중 오류가 발생했습니다."),
+                update_status_bar()
+            ])
+
+    threading.Thread(target=_do_add, daemon=True).start()
 
 
 def remove_ticker():
@@ -341,6 +360,7 @@ def remove_ticker():
             # Phase 11-5: Confirmation dialog
             if not messagebox.askyesno("삭제 확인", f"{company_name_with_ticker}을(를) 삭제하시겠습니까?"):
                 return
+            removed = False
             with app.watchlist_lock:
                 if ticker_to_remove in app.watchlist:
                     app.watchlist.remove(ticker_to_remove)
@@ -349,12 +369,13 @@ def remove_ticker():
                         holdings_manager.remove_holding(app.holdings, ticker_to_remove)
                         holdings_manager.save_holdings(app.holdings)
                     logging.info(f"[STOCK] {company_name_with_ticker} removed")
-                    # Phase 11-5: Undo support
                     app.undo_ticker = ticker_to_remove
-                    update_status_bar(f"{ticker_to_remove} 삭제됨", undo=True)
-                    refresh_table_once()
+                    removed = True
                 else:
                     messagebox.showwarning("없음", f"{ticker_to_remove}은 감시 리스트에 없습니다.")
+            if removed:
+                update_status_bar(f"{ticker_to_remove} 삭제됨", undo=True)
+                refresh_table_once()
         else:
             messagebox.showwarning("형식 오류", f"티커를 추출할 수 없습니다: {company_name_with_ticker}")
 
@@ -362,13 +383,16 @@ def remove_ticker():
 def undo_delete():
     """Phase 11-5: Undo last delete."""
     if app.undo_ticker:
+        should_refresh = False
         with app.watchlist_lock:
             if app.undo_ticker not in app.watchlist:
                 app.watchlist.append(app.undo_ticker)
                 save_watchlist()
                 logging.info(f"[STOCK] Undo delete: {app.undo_ticker}")
-                update_status_bar(f"{app.undo_ticker} 복원됨")
-                refresh_table_once()
+                should_refresh = True
+        if should_refresh:
+            update_status_bar(f"{app.undo_ticker} 복원됨")
+            refresh_table_once()
         app.undo_ticker = None
 
 
@@ -2554,7 +2578,8 @@ def main():
             font=("Arial", 9, "bold"), fg="#4A90D9", anchor="e"
         ).pack(anchor="e")
 
-    paned = tk.PanedWindow(root, orient=tk.VERTICAL, sashwidth=6, sashrelief=tk.RAISED)
+    paned = tk.PanedWindow(root, orient=tk.VERTICAL, sashwidth=8, sashrelief=tk.RAISED,
+                           sashcursor="sb_v_double_arrow", opaqueresize=True, bg="#C0C0C0")
     paned.pack(fill=tk.BOTH, expand=True, padx=PADDING_MD, pady=(0, PADDING_MD))
 
     # Table frame with grid resize (Phase 9-6)
@@ -2726,11 +2751,34 @@ def main():
     app.table.bind("<Leave>", _hide_heading_tooltip)
 
     # PanedWindow에 테이블 프레임 추가
-    paned.add(table_frame, stretch="always")
+    paned.add(table_frame, minsize=150, stretch="always")
 
     # 뉴스 패널
     app.news_panel = NewsPanel(paned, app_state=app)
-    paned.add(app.news_panel, minsize=80, stretch="never")
+    paned.add(app.news_panel, minsize=80, stretch="always")
+
+    # 사시 드래그 그립 표시 (═══ 핸들)
+    def _draw_sash_grip(event=None):
+        """PanedWindow 사시에 그립 핸들 그리기."""
+        try:
+            sash_y = paned.sash_coord(0)[1]
+            sash_h = 8  # sashwidth
+            # 기존 그립 삭제
+            for w in getattr(paned, '_grip_labels', []):
+                w.place_forget()
+                w.destroy()
+            grip = tk.Label(paned, text="⋯⋯⋯", font=("Arial", 6), fg="#888888",
+                            bg="#C0C0C0", cursor="sb_v_double_arrow")
+            grip.place(relx=0.5, y=sash_y, anchor="center")
+            grip.bind("<Button-1>", lambda e: None)  # 클릭 시 sash로 전달
+            grip.bind("<B1-Motion>", lambda e: paned.sash_place(0, 0, e.y_root - paned.winfo_rooty()))
+            paned._grip_labels = [grip]
+        except (tk.TclError, IndexError):
+            pass
+
+    paned.bind("<Configure>", _draw_sash_grip)
+    # sash 이동 시에도 그립 위치 업데이트
+    paned.bind("<ButtonRelease-1>", lambda e: paned.after(50, _draw_sash_grip))
 
     # Phase 11-1: Status bar
     app.status_bar = tk.Frame(root, relief=tk.SUNKEN, bd=1)

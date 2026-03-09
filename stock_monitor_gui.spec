@@ -5,9 +5,9 @@ block_cipher = None
 
 a = Analysis(
     ['stock_monitor_gui.py'],  # Main script
-    pathex=['.'],  # Current directory
+    pathex=['.', 'modules'],  # Current directory + modules
     binaries=[],  # No binary files to include
-    datas=[],  # We will add any data files below if necessary
+    datas=[('modules/*.py', 'modules')],
     hiddenimports=['stock_score', 'config', 'market_trend_manager', 'holidays.countries',
                     'backtest_popup', 'matplotlib.backends.backend_tkagg',
                     'tkinter', 'winsound', 'csv',

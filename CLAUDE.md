@@ -24,23 +24,27 @@ There are no tests or linting configured.
 ## Architecture
 
 ```
-stock_monitor_gui.py          # Main Tkinter GUI, entry point (AppState singleton)
-  ├── stock_score.py          # Technical analysis (RSI, MA, MACD, Bollinger, momentum, Ichimoku)
-  ├── market_trend_manager.py # US market session detection, trend caching, volatility regime
-  ├── config.py               # JSON config loading with recursive default merging, atomic writes
-  ├── backtest_popup.py       # Strategy backtesting engine + matplotlib charts (8 strategies)
-  ├── news_panel.py           # Finviz news scraping, sentiment classification, ticker linking
-  ├── data_cache.py           # SQLite cache for yfinance data (delta updates, TTL-based expiry)
-  ├── pattern_recognition.py  # Chart pattern detection (double top/bottom, H&S, triangles) via scipy
-  ├── fundamental_score.py    # Valuation scoring, Piotroski F-Score, factor scoring
-  ├── portfolio_analysis.py   # Correlation, optimization (4 methods), Black-Litterman, Fama-French
-  ├── holdings_manager.py     # Portfolio holdings CRUD (holdings.json), position/P&L calculation
-  ├── quant_screener.py       # Quantitative screening (6 strategies: buffett/graham/lynch/dividend/momentum/multifactor)
-  ├── screener_popup.py       # Screener UI popup with Treeview results + detail panel
-  ├── stock_universe.py       # Stock universe providers (S&P500/NASDAQ100/DOW30 bundled + online + CSV)
-  ├── help_texts.py           # Centralized Korean help/tooltip strings
-  └── ui_components.py        # Reusable Tooltip / HelpTooltip widgets
+stock_monitor_gui.py              # Main Tkinter GUI, entry point (AppState singleton)
+  └── modules/                    # All supporting modules (added to sys.path at startup)
+      ├── __init__.py
+      ├── stock_score.py          # Technical analysis (RSI, MA, MACD, Bollinger, momentum, Ichimoku)
+      ├── market_trend_manager.py # US market session detection, trend caching, volatility regime
+      ├── config.py               # JSON config loading with recursive default merging, atomic writes
+      ├── backtest_popup.py       # Strategy backtesting engine + matplotlib charts (8 strategies)
+      ├── news_panel.py           # Finviz news scraping, sentiment classification, ticker linking
+      ├── data_cache.py           # SQLite cache for yfinance data (delta updates, TTL-based expiry)
+      ├── pattern_recognition.py  # Chart pattern detection (double top/bottom, H&S, triangles) via scipy
+      ├── fundamental_score.py    # Valuation scoring, Piotroski F-Score, factor scoring
+      ├── portfolio_analysis.py   # Correlation, optimization (4 methods), Black-Litterman, Fama-French
+      ├── holdings_manager.py     # Portfolio holdings CRUD (holdings.json), position/P&L calculation
+      ├── quant_screener.py       # Quantitative screening (6 strategies: buffett/graham/lynch/dividend/momentum/multifactor)
+      ├── screener_popup.py       # Screener UI popup with Treeview results + detail panel
+      ├── stock_universe.py       # Stock universe providers (S&P500/NASDAQ100/DOW30 bundled + online + CSV)
+      ├── help_texts.py           # Centralized Korean help/tooltip strings
+      └── ui_components.py        # Reusable Tooltip / HelpTooltip widgets
 ```
+
+`stock_monitor_gui.py` adds `modules/` to `sys.path` at startup, so all inter-module imports (`import config`, `from fundamental_score import ...`) work unchanged.
 
 ### Data Flow
 

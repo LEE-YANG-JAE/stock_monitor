@@ -9,5 +9,16 @@
                 "notes": "기존 데이터 마이그레이션"
             }
         ]
+    },
+    "MAIN": {
+        "transactions": [
+            {
+                "type": "buy",
+                "quantity": 5.0,
+                "price": 56.69,
+                "date": "2026-03-10",
+                "notes": ""
+            }
+        ]
     }
 }
