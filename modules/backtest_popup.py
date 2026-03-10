@@ -347,7 +347,10 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         chart_frame.pack(fill=tk.X, padx=10, pady=5)
 
         canvas = FigureCanvasTkAgg(fig, master=chart_frame)
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        fig_w, fig_h = fig.get_size_inches()
+        dpi = fig.get_dpi()
+        canvas.get_tk_widget().configure(height=int(fig_h * dpi))
+        canvas.get_tk_widget().pack(fill=tk.X)
         canvas.draw()
 
         # 차트 읽는 법
@@ -658,8 +661,8 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                     ax.grid(alpha=0.3)
                     fig.tight_layout()
 
-                    popup.after(0, lambda f=fig: _create_graph_popup(f, f"{ticker_symbol} 전략 vs 보유 비교",
-                                        "파란선: 전략 매매 수익 | 주황 점선: 보유(Buy&Hold) 수익"))
+                    _create_graph_popup(fig, f"{ticker_symbol} 전략 vs 보유 비교",
+                                        "파란선: 전략 매매 수익 | 주황 점선: 보유(Buy&Hold) 수익")
 
         except Exception as e:
             logging.warning(f"[BACKTEST] Holdings comparison error: {e}")
@@ -745,7 +748,10 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         fig.tight_layout()
         open_figures.append(fig)
         canvas_mc = FigureCanvasTkAgg(fig, master=chart_frame)
-        canvas_mc.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        fig_w, fig_h = fig.get_size_inches()
+        dpi = fig.get_dpi()
+        canvas_mc.get_tk_widget().configure(height=int(fig_h * dpi))
+        canvas_mc.get_tk_widget().pack(fill=tk.X, padx=5, pady=5)
         canvas_mc.draw()
 
     def _save_trades_csv(buy_dates, sell_dates, profits):
@@ -1799,6 +1805,11 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                     buy_dates, sell_dates, profits = result
                     if profits:
                         _show_result_summary(profits, buy_dates, sell_dates, close_prices)
+                # 스크롤 영역 갱신
+                _scroll_inner.update_idletasks()
+                _scroll_canvas.configure(scrollregion=_scroll_canvas.bbox("all"))
+                _scroll_canvas.yview_moveto(
+                    result_container.winfo_y() / max(_scroll_inner.winfo_reqheight(), 1))
             popup.after(0, _wf_ui)
             return
 
@@ -1860,6 +1871,11 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                     _show_holdings_comparison(profits, buy_dates, sell_dates, close_prices)
                     # 몬테카를로 시뮬레이션
                     _show_monte_carlo(profits, close_prices)
+                # 스크롤 영역 갱신 및 결과 위치로 자동 스크롤
+                _scroll_inner.update_idletasks()
+                _scroll_canvas.configure(scrollregion=_scroll_canvas.bbox("all"))
+                _scroll_canvas.yview_moveto(
+                    result_container.winfo_y() / max(_scroll_inner.winfo_reqheight(), 1))
             popup.after(0, _update_ui)
         else:
             popup.after(0, lambda: messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다."))
@@ -1909,7 +1925,6 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
     # 결과 표시 전용 프레임 (매 실행 시 내용 교체)
     result_container = tk.Frame(_scroll_inner)
-    result_container.pack(fill=tk.X, side=tk.BOTTOM)
 
     def _clear_result_area():
         for widget in result_container.winfo_children():
@@ -2639,10 +2654,19 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                                                 font=("Arial", 10, "bold"))
                     chart_frame.pack(fill=tk.X, padx=10, pady=5)
                     canvas = FigureCanvasTkAgg(fig, master=chart_frame)
-                    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                    fig_w, fig_h = fig.get_size_inches()
+                    dpi = fig.get_dpi()
+                    canvas.get_tk_widget().configure(height=int(fig_h * dpi))
+                    canvas.get_tk_widget().pack(fill=tk.X)
                     canvas.draw()
                     tk.Button(chart_frame, text="PNG 저장",
                               command=lambda f=fig: _save_fig_png(f)).pack(pady=3)
+
+                    # 스크롤 영역 갱신
+                    _scroll_inner.update_idletasks()
+                    _scroll_canvas.configure(scrollregion=_scroll_canvas.bbox("all"))
+                    _scroll_canvas.yview_moveto(
+                        result_container.winfo_y() / max(_scroll_inner.winfo_reqheight(), 1))
 
                 popup.after(0, _show_compare)
             except Exception as e:
@@ -2777,10 +2801,19 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                                                font=("Arial", 10, "bold"))
                     heat_frame.pack(fill=tk.X, padx=10, pady=5)
                     canvas = FigureCanvasTkAgg(fig, master=heat_frame)
-                    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                    fig_w, fig_h = fig.get_size_inches()
+                    dpi = fig.get_dpi()
+                    canvas.get_tk_widget().configure(height=int(fig_h * dpi))
+                    canvas.get_tk_widget().pack(fill=tk.X)
                     canvas.draw()
                     tk.Button(heat_frame, text="PNG 저장",
                               command=lambda f=fig: _save_fig_png(f)).pack(pady=3)
+
+                    # 스크롤 영역 갱신
+                    _scroll_inner.update_idletasks()
+                    _scroll_canvas.configure(scrollregion=_scroll_canvas.bbox("all"))
+                    _scroll_canvas.yview_moveto(
+                        result_container.winfo_y() / max(_scroll_inner.winfo_reqheight(), 1))
 
                 popup.after(0, _show_heatmap)
             except Exception as e:
@@ -3017,5 +3050,8 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
     close_btn = tk.Button(btn_frame, text="닫기", command=lambda: (cleanup_figures(), popup.destroy()))
     close_btn.pack(side=tk.LEFT, padx=5)
+
+    # result_container는 모든 UI 위젯 아래에 pack (side=tk.BOTTOM 사용 시 스크롤 캔버스 내 레이아웃 문제 발생)
+    result_container.pack(fill=tk.X)
 
     update_dates()
