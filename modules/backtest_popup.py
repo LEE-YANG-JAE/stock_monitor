@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox, filedialog
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -328,7 +329,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     _suppress_chart = [False]
 
     def _create_graph_popup(fig, title, help_text=""):
-        """Create a Toplevel window with matplotlib figure and save buttons."""
+        """차트를 result_container 안에 임베딩."""
         if _suppress_chart[0]:
             try:
                 plt.close(fig)
@@ -341,46 +342,26 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         except Exception:
             pass
         open_figures.append(fig)
-        graph_popup = tk.Toplevel()
-        graph_popup.title(title)
-        graph_popup.state('zoomed')
-        graph_popup.minsize(600, 400)
 
-        canvas = FigureCanvasTkAgg(fig, master=graph_popup)
+        chart_frame = tk.LabelFrame(result_container, text=title, font=("Arial", 10, "bold"))
+        chart_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        canvas = FigureCanvasTkAgg(fig, master=chart_frame)
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         canvas.draw()
 
         # 차트 읽는 법
         if help_text:
-            help_frame = tk.LabelFrame(graph_popup, text="차트 읽는 법", font=("Arial", 10, "bold"))
+            help_frame = tk.LabelFrame(chart_frame, text="차트 읽는 법", font=("Arial", 9, "bold"))
             help_frame.pack(fill=tk.X, padx=8, pady=(0, 2))
             tk.Label(help_frame, text=help_text, font=("Arial", 9), justify=tk.LEFT,
                      wraplength=700, anchor="w").pack(padx=8, pady=4, anchor="w")
 
-        # Phase 12-1: Save buttons
-        btn_frame = tk.Frame(graph_popup)
-        btn_frame.pack(fill=tk.X, pady=5)
+        # PNG 저장 버튼
+        tk.Button(chart_frame, text="PNG 저장",
+                  command=lambda f=fig: _save_fig_png(f)).pack(pady=3)
 
-        def save_png():
-            path = filedialog.asksaveasfilename(
-                defaultextension=".png",
-                filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
-                initialfile=f"{ticker_symbol}_backtest.png"
-            )
-            if path:
-                fig.savefig(path, dpi=150, bbox_inches='tight')
-                messagebox.showinfo("저장 완료", f"그래프가 저장되었습니다:\n{path}")
-
-        tk.Button(btn_frame, text="그래프 저장 (PNG)", command=save_png).pack(side=tk.RIGHT, padx=5)
-
-        def on_graph_close():
-            if fig in open_figures:
-                open_figures.remove(fig)
-            plt.close(fig)
-            graph_popup.destroy()
-
-        graph_popup.protocol("WM_DELETE_WINDOW", on_graph_close)
-        return graph_popup
+        return chart_frame
 
     def _show_result_summary(profits, buy_dates, sell_dates, close_series):
         """백테스트 결과 요약 패널 — 투자 판단에 유의미한 지표만 표시."""
@@ -658,7 +639,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                 if len(hold_series) >= 2:
                     hold_equity = hold_series / hold_series.iloc[0]
 
-                    fig, ax = plt.subplots(figsize=(8, 4))
+                    fig = Figure(figsize=(8, 4)); ax = fig.add_subplot(111)
                     # 전략 커브 (거래 시점 기준이라 x축을 sell_dates로 매핑)
                     strat_dates = [close_series.index[0]]
                     for sd in sell_dates:
@@ -675,10 +656,10 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                     ax.set_ylabel("누적 수익률")
                     ax.legend(fontsize=9)
                     ax.grid(alpha=0.3)
-                    plt.tight_layout()
+                    fig.tight_layout()
 
-                    _create_graph_popup(fig, f"{ticker_symbol} 전략 vs 보유 비교",
-                                        "파란선: 전략 매매 수익 | 주황 점선: 보유(Buy&Hold) 수익")
+                    popup.after(0, lambda f=fig: _create_graph_popup(f, f"{ticker_symbol} 전략 vs 보유 비교",
+                                        "파란선: 전략 매매 수익 | 주황 점선: 보유(Buy&Hold) 수익"))
 
         except Exception as e:
             logging.warning(f"[BACKTEST] Holdings comparison error: {e}")
@@ -740,7 +721,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                                      font=("Arial", 10, "bold"))
         chart_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.5))
+        fig = Figure(figsize=(10, 3.5)); ax1 = fig.add_subplot(1, 2, 1); ax2 = fig.add_subplot(1, 2, 2)
 
         # 수익률 분포
         ax1.hist(sim_returns * 100, bins=50, color="#4A90D9", alpha=0.7, edgecolor="white")
@@ -790,7 +771,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             messagebox.showerror("저장 실패", f"CSV 저장 오류: {e}")
 
     def plot_macd_backtest(ticker_symbol, close_prices, macd_line, signal_line, buy_signals, sell_signals):
-        fig, ax1 = plt.subplots(figsize=(10, 6))
+        fig = Figure(figsize=(10, 6)); ax1 = fig.add_subplot(111)
 
         ax1.plot(close_prices.index, close_prices, label='주가', color='black')
         ax1.set_ylabel('가격 ($)')
@@ -815,10 +796,10 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
         ax1.legend(lines, labels, loc='upper left')
 
-        _create_graph_popup(fig, f"{stock_display} 백테스트 결과", CHART_HELP.get("macd", ""))
+        return fig, f"{stock_display} 백테스트 결과", CHART_HELP.get("macd", "")
 
     def plot_rsi_backtest(ticker_symbol, close_prices, rsi, buy_signals, sell_signals):
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        fig = Figure(figsize=(10, 8)); ax1 = fig.add_subplot(2, 1, 1); ax2 = fig.add_subplot(2, 1, 2, sharex=ax1)
 
         ax1.plot(close_prices.index, close_prices, label='주가', color='black')
         ax1.set_ylabel('가격 ($)')
@@ -847,12 +828,12 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
         ax1.legend(lines, labels, loc='upper left')
 
-        _create_graph_popup(fig, f"{stock_display} 백테스트 결과", CHART_HELP.get("rsi", ""))
+        return fig, f"{stock_display} 백테스트 결과", CHART_HELP.get("rsi", "")
 
     def plot_macd_rsi_backtest(data, buy_dates, sell_dates, ticker_name):
-        fig = plt.figure(figsize=(14, 10))
+        fig = Figure(figsize=(14, 10))
 
-        ax1 = plt.subplot(3, 1, 1)
+        ax1 = fig.add_subplot(3, 1, 1)
         ax1.set_title(f"{ticker_name} MACD+RSI 복합 백테스트")
         ax1.plot(data["Close"], label="주가", color="black")
         ma_s = config.config["current"]["ma_cross"]["short"]
@@ -883,25 +864,25 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         rsi_upper = config.config["current"]["rsi"]['upper']
         rsi_lower = config.config["current"]["rsi"]['lower']
 
-        ax2 = plt.subplot(3, 1, 2)
+        ax2 = fig.add_subplot(3, 1, 2)
         ax2.plot(data["RSI"], label=f'RSI ({rsi_period})', color="purple")
         ax2.axhline(rsi_upper, linestyle="--", color="red", alpha=0.5)
         ax2.axhline(rsi_lower, linestyle="--", color="green", alpha=0.5)
         ax2.set_ylabel("RSI 값")
         ax2.legend(loc="upper left")
 
-        ax3 = plt.subplot(3, 1, 3)
+        ax3 = fig.add_subplot(3, 1, 3)
         ax3.plot(data["MACD"], label="MACD", color="blue")
         ax3.plot(data["Signal"], label="시그널 선", color="red")
         ax3.axhline(0, linestyle="--", color="black", alpha=0.3)
         ax3.set_ylabel("MACD 지표")
         ax3.legend(loc="upper left")
 
-        plt.tight_layout()
-        _create_graph_popup(fig, f"{ticker_name} MACD+RSI 백테스트", CHART_HELP.get("macd_rsi", ""))
+        fig.tight_layout()
+        return fig, f"{ticker_name} MACD+RSI 백테스트", CHART_HELP.get("macd_rsi", "")
 
     def plot_bollinger(data, buy_dates, sell_dates, ticker_name):
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig = Figure(figsize=(12, 6)); ax = fig.add_subplot(111)
         ax.plot(data.index, data['Close'], label='주가', color='black')
         ax.plot(data.index, data['UpperBand'], label='상단 밴드', linestyle='--')
         ax.plot(data.index, data['LowerBand'], label='하단 밴드', linestyle='--')
@@ -912,10 +893,10 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         ax.set_ylabel("가격 ($)")
         ax.legend()
         ax.grid()
-        _create_graph_popup(fig, f"{ticker_name} 볼린저밴드 백테스트", CHART_HELP.get("bollinger", ""))
+        return fig, f"{ticker_name} 볼린저밴드 백테스트", CHART_HELP.get("bollinger", "")
 
     def plot_ma_cross(data, buy_dates, sell_dates, ticker_name, chart_key="ma_cross"):
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig = Figure(figsize=(12, 6)); ax = fig.add_subplot(111)
         ma_s = config.config["current"]["ma_cross"]["short"]
         ma_l = config.config["current"]["ma_cross"]["long"]
         ax.plot(data.index, data['Close'], label='주가', color='black')
@@ -928,12 +909,15 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         ax.set_ylabel("가격 ($)")
         ax.legend()
         ax.grid()
-        _create_graph_popup(fig, f"{ticker_name} MA교차 백테스트", CHART_HELP.get(chart_key, ""))
+        return fig, f"{ticker_name} MA교차 백테스트", CHART_HELP.get(chart_key, "")
 
     def plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates, rsi, macd,
                                       signal, ticker_name):
-        fig, (ax_price, ax_rsi, ax_macd) = plt.subplots(3, 1, figsize=(14, 10), sharex=True,
-                                                        gridspec_kw={'height_ratios': [2, 1, 1]})
+        fig = Figure(figsize=(14, 10))
+        gs = fig.add_gridspec(3, 1, height_ratios=[2, 1, 1])
+        ax_price = fig.add_subplot(gs[0])
+        ax_rsi = fig.add_subplot(gs[1], sharex=ax_price)
+        ax_macd = fig.add_subplot(gs[2], sharex=ax_price)
 
         ma_s = config.config['current']['ma_cross']['short']
         ma_l = config.config['current']['ma_cross']['long']
@@ -976,9 +960,9 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         ax_macd.legend()
         ax_macd.grid(linestyle='--', alpha=0.7)
 
-        plt.xlabel("날짜")
-        plt.tight_layout()
-        _create_graph_popup(fig, f"{ticker_name} 모멘텀 백테스트", CHART_HELP.get("momentum_signal", ""))
+        ax_macd.set_xlabel("날짜")
+        fig.tight_layout()
+        return fig, f"{ticker_name} 모멘텀 백테스트", CHART_HELP.get("momentum_signal", "")
 
     # Phase 8-1: Strategy functions split from run_backtest
 
@@ -1002,8 +986,8 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             elif macd_prev > signal_prev and macd_now < signal_now:
                 sell_signals.append(i)
 
-        plot_macd_backtest(stock_display, close_prices, macd_line, signal_line, buy_signals, sell_signals)
-        return [], [], []  # No profit tracking for simple signal display
+        chart_info = plot_macd_backtest(stock_display, close_prices, macd_line, signal_line, buy_signals, sell_signals)
+        return [], [], [], chart_info
 
     def _run_rsi(data, close_prices):
         period = config.config["current"]["rsi"]['period']
@@ -1019,8 +1003,8 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             elif rsi.iloc[i].item() > upper:
                 sell_signals.append(i)
 
-        plot_rsi_backtest(stock_display, close_prices, rsi, buy_signals, sell_signals)
-        return [], [], []
+        chart_info = plot_rsi_backtest(stock_display, close_prices, rsi, buy_signals, sell_signals)
+        return [], [], [], chart_info
 
     def _run_macd_rsi(data, close_prices):
         macd_conf = config.config["current"]["macd"]
@@ -1066,14 +1050,16 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             exit_price = data["Close"].iloc[-1]
             profits.append(_safe_division(exit_price, entry_price))
 
+        chart_info = None
         if profits:
             total_return = (1 + pd.Series(profits)).prod() - 1
             logging.info(f"[MACD+RSI] Total return: {total_return:.2%}")
-            plot_macd_rsi_backtest(data, buy_dates, sell_dates, stock_display)
+            chart_info = plot_macd_rsi_backtest(data, buy_dates, sell_dates, stock_display)
         else:
-            messagebox.showinfo("알림", f"[{ticker_symbol}] MACD+RSI 전략으로 거래 없음")
+            if not _suppress_chart[0]:
+                popup.after(0, lambda: messagebox.showinfo("알림", f"[{ticker_symbol}] MACD+RSI 전략으로 거래 없음"))
 
-        return buy_dates, sell_dates, profits
+        return buy_dates, sell_dates, profits, chart_info
 
     def _run_bollinger(data, close_prices):
         window = config.config["current"]["bollinger"]["period"]
@@ -1094,7 +1080,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             data = data.dropna(subset=expected_cols)
         else:
             logging.error(f"[BACKTEST] Missing columns: {expected_cols}, found: {data.columns.tolist()}")
-            return [], [], []
+            return [], [], [], None
 
         use_rebound = config.config["current"]["bollinger"]["use_rebound"]
         buy_dates = []
@@ -1139,15 +1125,17 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                 exit_price = data['Close'].iloc[-1]
                 profits.append(_safe_division(exit_price, entry_price))
 
+        chart_info = None
         if profits:
             total_return = (1 + pd.Series(profits)).prod() - 1
             logging.info(f"[Bollinger] Total return: {total_return:.2%}")
-            plot_bollinger(data, buy_dates, sell_dates, stock_display)
+            chart_info = plot_bollinger(data, buy_dates, sell_dates, stock_display)
         else:
             logging.info("[Bollinger] No trades")
-            messagebox.showerror("데이터 없음", "[볼린저 밴드]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
+            if not _suppress_chart[0]:
+                popup.after(0, lambda: messagebox.showerror("데이터 없음", "[볼린저 밴드]를 확인할 수 없습니다. 기간을 더 늘려주세요."))
 
-        return buy_dates, sell_dates, profits
+        return buy_dates, sell_dates, profits, chart_info
 
     def _run_ma_cross(data, close_prices):
         short_window = config.config["current"]["ma_cross"]["short"]
@@ -1183,14 +1171,16 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             exit_price = data['Close'].iloc[-1]
             profits.append(_safe_division(exit_price, entry_price))
 
+        chart_info = None
         if profits:
             total_return = (1 + pd.Series(profits)).prod() - 1
             logging.info(f"[MA Cross] Total return: {total_return:.2%}")
-            plot_ma_cross(data, buy_dates, sell_dates, stock_display)
+            chart_info = plot_ma_cross(data, buy_dates, sell_dates, stock_display)
         else:
-            messagebox.showerror("데이터 없음", "[이동평균 교차]를 확인할 수 없습니다. 기간을 더 늘려주세요.")
+            if not _suppress_chart[0]:
+                popup.after(0, lambda: messagebox.showerror("데이터 없음", "[이동평균 교차]를 확인할 수 없습니다. 기간을 더 늘려주세요."))
 
-        return buy_dates, sell_dates, profits
+        return buy_dates, sell_dates, profits, chart_info
 
     def _run_momentum_signal(data, close_prices):
         macd_short_span = config.config['current']['macd']['short']
@@ -1286,9 +1276,9 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         else:
             logging.info("[Momentum] No trades")
 
-        plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates,
-                                      rsi, macd, signal, stock_display)
-        return buy_dates, sell_dates, profits
+        chart_info = plot_momentum_with_indicators(data, short_ma, long_ma, upper_band, lower_band, buy_dates, sell_dates,
+                                                    rsi, macd, signal, stock_display)
+        return buy_dates, sell_dates, profits, chart_info
 
     def _run_momentum_return_ma(data, close_prices):
         short_window = config.config['current']['ma_cross']['short']
@@ -1325,18 +1315,20 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             exit_price = data['Close'].iloc[-1]
             profits.append(_safe_division(exit_price, entry_price))
 
+        chart_info = None
         if profits:
             total_return = (1 + pd.Series(profits)).prod() - 1
             logging.info(f"[Momentum Return + MA] Total return: {total_return:.2%}")
-            plot_ma_cross(data, buy_dates, sell_dates, stock_display, chart_key="momentum_return_ma")
+            chart_info = plot_ma_cross(data, buy_dates, sell_dates, stock_display, chart_key="momentum_return_ma")
         else:
-            messagebox.showerror("데이터 없음", "[모멘텀 수익률 + MA 교차] 거래 없음")
+            if not _suppress_chart[0]:
+                popup.after(0, lambda: messagebox.showerror("데이터 없음", "[모멘텀 수익률 + MA 교차] 거래 없음"))
 
-        return buy_dates, sell_dates, profits
+        return buy_dates, sell_dates, profits, chart_info
 
     def plot_ichimoku(data, buy_dates, sell_dates, ticker_name):
         """Ichimoku Cloud 차트 렌더링."""
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig = Figure(figsize=(12, 6)); ax = fig.add_subplot(111)
         ax.plot(data.index, data['Close'], label='종가', color='black', linewidth=1)
         ax.plot(data.index, data['Tenkan'], label='전환선(9)', color='blue', linewidth=0.8, linestyle='--')
         ax.plot(data.index, data['Kijun'], label='기준선(26)', color='red', linewidth=0.8, linestyle='--')
@@ -1360,17 +1352,17 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         ax.set_title(f"{ticker_name} 일목균형표 백테스트", fontsize=12, fontweight='bold')
         ax.legend(fontsize=8, loc='upper left')
         ax.grid(alpha=0.3)
-        plt.tight_layout()
-        _create_graph_popup(fig, f"{ticker_name} 일목균형표 백테스트",
-                            CHART_HELP.get("ichimoku", ""))
+        fig.tight_layout()
+        return fig, f"{ticker_name} 일목균형표 백테스트", CHART_HELP.get("ichimoku", "")
 
     def _run_ichimoku(data, close_prices):
         """일목균형표 전략: 전환선/기준선 교차 + 구름 돌파."""
         from stock_score import calculate_ichimoku as _calc_ichimoku
         ichimoku = _calc_ichimoku(data, tenkan=9, kijun=26, senkou_b=52)
         if ichimoku is None:
-            messagebox.showerror("데이터 없음", "일목균형표 계산에 충분한 데이터가 없습니다.\n기간을 늘려주세요.")
-            return [], [], []
+            if not _suppress_chart[0]:
+                popup.after(0, lambda: messagebox.showerror("데이터 없음", "일목균형표 계산에 충분한 데이터가 없습니다.\n기간을 늘려주세요."))
+            return [], [], [], None
 
         data['Tenkan'] = ichimoku['tenkan_sen']
         data['Kijun'] = ichimoku['kijun_sen']
@@ -1416,14 +1408,16 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             exit_price = data['Close'].iloc[-1]
             profits.append(_safe_division(exit_price, entry_price))
 
+        chart_info = None
         if profits:
             total_return = (1 + pd.Series(profits)).prod() - 1
             logging.info(f"[Ichimoku] Total return: {total_return:.2%}")
-            plot_ichimoku(data, buy_dates, sell_dates, stock_display)
+            chart_info = plot_ichimoku(data, buy_dates, sell_dates, stock_display)
         else:
-            messagebox.showerror("데이터 없음", "[일목균형표] 거래 없음. 기간을 늘려주세요.")
+            if not _suppress_chart[0]:
+                popup.after(0, lambda: messagebox.showerror("데이터 없음", "[일목균형표] 거래 없음. 기간을 늘려주세요."))
 
-        return buy_dates, sell_dates, profits
+        return buy_dates, sell_dates, profits, chart_info
 
     # Phase 8-1: Strategy dispatch dictionary
     strategy_dispatch = {
@@ -1673,7 +1667,8 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         if not handler:
             return
 
-        buy_dates, sell_dates, profits = handler(data, close_prices)
+        _wf_result = handler(data, close_prices)
+        buy_dates, sell_dates, profits = _wf_result[0], _wf_result[1], _wf_result[2]
 
         # 후처리 적용
         if stoploss is not None and profits:
@@ -1761,11 +1756,11 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
         try:
             data = _retry_download(ticker_sym, start_str, end_str)
         except (ConnectionError, TimeoutError, OSError) as e:
-            messagebox.showerror("네트워크 오류",
-                                 f"데이터를 가져올 수 없습니다.\n네트워크 연결을 확인하세요.\n\n{e}")
+            popup.after(0, lambda e=e: messagebox.showerror("네트워크 오류",
+                                 f"데이터를 가져올 수 없습니다.\n네트워크 연결을 확인하세요.\n\n{e}"))
             return
         except Exception as e:
-            messagebox.showerror("다운로드 오류", f"데이터 다운로드 실패: {e}")
+            popup.after(0, lambda e=e: messagebox.showerror("다운로드 오류", f"데이터 다운로드 실패: {e}"))
             return
 
         # Phase 3-7: Robust MultiIndex handling
@@ -1779,9 +1774,9 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
         if data.empty:
             # Phase 11-7: Specific error messages
-            messagebox.showerror("데이터 없음",
+            popup.after(0, lambda: messagebox.showerror("데이터 없음",
                                  f"{ticker_sym}에 대한 데이터를 가져올 수 없습니다.\n"
-                                 "티커가 올바른지 확인하세요.")
+                                 "티커가 올바른지 확인하세요."))
             return
 
         close_prices = data['Close']
@@ -1792,22 +1787,26 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
             regime_mask = _compute_regime_mask(start_str, end_str)
 
         # Phase 8-1: Dispatch
-        _clear_result_area()
 
         # 워크포워드 모드
         if use_walk_forward:
             train_ratio = config.config["backtest"].get("walk_forward_train_ratio", 0.7)
-            result = _run_walk_forward(data, close_prices, method, stoploss, trailing,
-                                       pos_sizing, train_ratio)
-            if result:
-                buy_dates, sell_dates, profits = result
-                if profits:
-                    _show_result_summary(profits, buy_dates, sell_dates, close_prices)
+            def _wf_ui():
+                _clear_result_area()
+                result = _run_walk_forward(data, close_prices, method, stoploss, trailing,
+                                           pos_sizing, train_ratio)
+                if result:
+                    buy_dates, sell_dates, profits = result
+                    if profits:
+                        _show_result_summary(profits, buy_dates, sell_dates, close_prices)
+            popup.after(0, _wf_ui)
             return
 
         handler = strategy_dispatch.get(method)
         if handler:
-            buy_dates, sell_dates, profits = handler(data, close_prices)
+            result = handler(data, close_prices)
+            buy_dates, sell_dates, profits = result[0], result[1], result[2]
+            chart_info = result[3] if len(result) > 3 else None
             # 레짐 필터 적용
             if use_regime and profits:
                 buy_dates, sell_dates, profits = _apply_regime_filter(
@@ -1826,34 +1825,44 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                 atr_mult = config.config["backtest"].get("atr_sizing_multiplier", 2.0)
                 sizes = _calculate_position_sizes(profits, data, method=pos_sizing,
                                                    risk_pct=risk_pct, atr_mult=atr_mult)
-                # 에쿼티 커브에 포지션 사이즈 반영하여 profits 재계산
                 adjusted_profits = [p * s for p, s in zip(profits, sizes)]
                 profits = adjusted_profits
-            if profits:
-                _show_result_summary(profits, buy_dates, sell_dates, close_prices)
-                # 적용된 필터 표시
-                filter_texts = []
-                if stoploss is not None:
-                    filter_texts.append(f"손절: -{stoploss*100:.1f}%")
-                if trailing is not None:
-                    t_type = "%" if trailing[0] == 'pct' else "ATR"
-                    filter_texts.append(f"추적손절: {trailing[1]}{t_type}")
-                if use_regime:
-                    filter_texts.append("레짐 필터 (SPY)")
-                if pos_sizing != 'full':
-                    sizing_names = {'kelly': '켈리', 'atr': 'ATR', 'fixed': '고정비율'}
-                    filter_texts.append(f"포지션: {sizing_names.get(pos_sizing, pos_sizing)}")
-                if filter_texts:
-                    filter_label = tk.Label(result_container,
-                                            text="적용: " + " | ".join(filter_texts),
-                                            font=("Arial", 9, "bold"), fg="#4A90D9")
-                    filter_label.pack(padx=10, anchor="w")
-                # 보유 종목이면 보유 vs 전략 비교 표시
-                _show_holdings_comparison(profits, buy_dates, sell_dates, close_prices)
-                # 몬테카를로 시뮬레이션
-                _show_monte_carlo(profits, close_prices)
+
+            # UI 업데이트를 메인 스레드로 위임
+            def _update_ui(profits=profits, buy_dates=buy_dates, sell_dates=sell_dates,
+                           close_prices=close_prices, stoploss=stoploss, trailing=trailing,
+                           use_regime=use_regime, pos_sizing=pos_sizing, chart_info=chart_info):
+                _clear_result_area()
+                # 차트를 result_container에 임베딩
+                if chart_info and not _suppress_chart[0]:
+                    fig, title, help_text = chart_info
+                    _create_graph_popup(fig, title, help_text)
+                if profits:
+                    _show_result_summary(profits, buy_dates, sell_dates, close_prices)
+                    # 적용된 필터 표시
+                    filter_texts = []
+                    if stoploss is not None:
+                        filter_texts.append(f"손절: -{stoploss*100:.1f}%")
+                    if trailing is not None:
+                        t_type = "%" if trailing[0] == 'pct' else "ATR"
+                        filter_texts.append(f"추적손절: {trailing[1]}{t_type}")
+                    if use_regime:
+                        filter_texts.append("레짐 필터 (SPY)")
+                    if pos_sizing != 'full':
+                        sizing_names = {'kelly': '켈리', 'atr': 'ATR', 'fixed': '고정비율'}
+                        filter_texts.append(f"포지션: {sizing_names.get(pos_sizing, pos_sizing)}")
+                    if filter_texts:
+                        filter_label = tk.Label(result_container,
+                                                text="적용: " + " | ".join(filter_texts),
+                                                font=("Arial", 9, "bold"), fg="#4A90D9")
+                        filter_label.pack(padx=10, anchor="w")
+                    # 보유 종목이면 보유 vs 전략 비교 표시
+                    _show_holdings_comparison(profits, buy_dates, sell_dates, close_prices)
+                    # 몬테카를로 시뮬레이션
+                    _show_monte_carlo(profits, close_prices)
+            popup.after(0, _update_ui)
         else:
-            messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다.")
+            popup.after(0, lambda: messagebox.showinfo("알림", f"{method} 전략은 아직 구현되지 않았습니다."))
 
     # --- Popup UI ---
     popup = tk.Toplevel()
@@ -2014,6 +2023,25 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                 if key in INDICATOR_TOOLTIPS:
                     HelpTooltip(lbl, INDICATOR_TOOLTIPS[key])
                 return lbl
+
+            # 섹터/산업/홈페이지 정보
+            sector = info.get('sector', '')
+            industry = info.get('industry', '')
+            website = info.get('website', '')
+            if sector or industry or website:
+                info_row = tk.Frame(indicator_frame)
+                info_row.pack(fill=tk.X, padx=10, pady=(5, 2))
+                parts = []
+                if sector:
+                    parts.append(f"섹터: {sector}")
+                if industry:
+                    parts.append(f"산업: {industry}")
+                if parts:
+                    tk.Label(info_row, text=" | ".join(parts), font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+                if website:
+                    link = tk.Label(info_row, text="홈페이지", font=("Arial", 9, "underline"), fg="blue", cursor="hand2")
+                    link.pack(side=tk.LEFT, padx=(10, 0))
+                    link.bind("<Button-1>", lambda e, url=website: webbrowser.open(url))
 
             # Row 1: PER, Fwd PER, PBR, PEG
             row1 = tk.Frame(indicator_frame)
@@ -2408,33 +2436,61 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
     btn_frame = tk.Frame(_scroll_inner)
     btn_frame.pack(pady=10)
 
-    search_btn = tk.Button(btn_frame, text="검색 및 분석", command=save_and_search)
-    search_btn.pack(side=tk.LEFT, padx=5)
+    # ── 분석 드롭다운 메뉴 버튼 ──
+    analysis_mb = tk.Menubutton(btn_frame, text="▼ 분석", font=("Arial", 10, "bold"),
+                                relief=tk.RAISED, bd=2, padx=8, pady=2)
+    analysis_menu = tk.Menu(analysis_mb, tearoff=0)
+    analysis_mb["menu"] = analysis_menu
+    analysis_mb.pack(side=tk.LEFT, padx=5)
 
-    def _compare_all_strategies():
-        """모든 전략을 동시 실행하여 비교 테이블과 에쿼티 커브 오버레이 표시."""
+    # search_btn은 기존 코드에서 state 제어용으로 참조됨 → analysis_mb에 위임
+    search_btn = analysis_mb
+    analysis_menu.add_command(label="검색 및 분석", command=save_and_search)
+
+    def _parse_period():
+        """UI 기간 설정을 파싱하여 (start_str, end_str) 반환. 실패 시 None."""
         mode = bt_period_mode_var.get()
         if mode == "absolute":
             start_str = bt_start_date_entry.get().strip()
             end_str = bt_end_date_entry.get().strip()
+            try:
+                datetime.strptime(start_str, '%Y-%m-%d')
+                datetime.strptime(end_str, '%Y-%m-%d')
+            except ValueError:
+                messagebox.showerror("오류", "날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)")
+                return None
+            if start_str >= end_str:
+                messagebox.showerror("오류", "시작 날짜가 종료 날짜보다 이전이어야 합니다.")
+                return None
+            return start_str, end_str
         else:
             value_text = period_value_entry.get().strip()
             if not value_text.isdigit():
                 messagebox.showerror("오류", "기간 숫자를 입력하세요.")
-                return
+                return None
             value = int(value_text)
+            if value < 1 or value > 9999:
+                messagebox.showerror("오류", "1~9999 범위의 숫자를 입력하세요.")
+                return None
             unit = _get_unit_key()
+            if unit not in ('d', 'mo', 'y'):
+                messagebox.showerror("오류", "기간 단위를 일, 개월, 년 중 하나로 선택하세요.")
+                return None
             now = datetime.now()
             if unit == 'd':
                 start = now - timedelta(days=value)
             elif unit == 'mo':
                 start = now - timedelta(days=value * 30)
-            elif unit == 'y':
-                start = now - timedelta(days=value * 365)
             else:
-                start = now
-            start_str = start.strftime('%Y-%m-%d')
-            end_str = now.strftime('%Y-%m-%d')
+                start = now - timedelta(days=value * 365)
+            return start.strftime('%Y-%m-%d'), now.strftime('%Y-%m-%d')
+
+    def _compare_all_strategies():
+        """모든 전략을 동시 실행하여 비교 테이블과 에쿼티 커브 오버레이 표시."""
+        parsed = _parse_period()
+        if parsed is None:
+            return
+        start_str, end_str = parsed
 
         search_btn.config(state=tk.DISABLED)
 
@@ -2454,14 +2510,15 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                 # 비교 실행 중 개별 전략 차트 팝업 억제
                 _suppress_chart[0] = True
                 # 거래가 있는 전략만 비교 (macd, rsi는 시각화 전용이라 제외)
-                compare_strategies = ["macd_rsi", "bollinger", "ma_cross", "momentum_signal", "momentum_return_ma"]
+                compare_strategies = ["macd_rsi", "bollinger", "ma_cross", "momentum_signal", "momentum_return_ma", "ichimoku"]
                 for strat_key in compare_strategies:
                     handler = strategy_dispatch.get(strat_key)
                     if not handler:
                         continue
                     try:
                         data_copy = data.copy()
-                        bd, sd, profs = handler(data_copy, close_prices.copy())
+                        _result = handler(data_copy, close_prices.copy())
+                        bd, sd, profs = _result[0], _result[1], _result[2]
                         if profs:
                             p_series = pd.Series(profs)
                             total_ret = (1 + p_series).prod() - 1
@@ -2485,6 +2542,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                                 "mdd": mdd,
                                 "trades": len(profs),
                                 "equity": equity,
+                                "buy_dates": bd,
                                 "sell_dates": sd,
                             }
                     except Exception as e:
@@ -2499,7 +2557,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                         return
                     _clear_result_area()
 
-                    comp_frame = tk.LabelFrame(result_container, text="모든 전략 비교",
+                    comp_frame = tk.LabelFrame(result_container, text=f"모든 전략 비교 ({start_str} ~ {end_str})",
                                                 font=("Arial", 10, "bold"))
                     comp_frame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -2531,27 +2589,46 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                         tk.Label(row, text=f"{res['trades']}",
                                  font=font_w, width=7).pack(side=tk.LEFT)
 
+                    skipped = [k for k in compare_strategies if k not in results]
+                    if skipped:
+                        skipped_names = [STRATEGY_DISPLAY_NAMES.get(k, k) for k in skipped]
+                        tk.Label(comp_frame, text=f"(생략: {', '.join(skipped_names)} — 거래 없음 또는 오류)",
+                                 font=("Arial", 8), fg="#999").pack(padx=8, pady=(0, 5), anchor="w")
+
                     # 에쿼티 커브 오버레이 차트
-                    fig, ax = plt.subplots(figsize=(10, 5))
+                    fig = Figure(figsize=(10, 5)); ax = fig.add_subplot(111)
                     for key, res in results.items():
                         name = STRATEGY_DISPLAY_NAMES.get(key, key)
                         eq = res["equity"]
+                        bd = res["buy_dates"]
                         sd = res["sell_dates"]
-                        dates = [close_prices.index[0]]
+                        # 에쿼티: [1.0(첫 매수 시점), 매도1 후, 매도2 후, ...]
+                        # 날짜: 첫 매수일 + 각 매도일
+                        dates = []
+                        if bd:
+                            dates.append(pd.Timestamp(bd[0]))
                         for d in sd:
                             dates.append(pd.Timestamp(d))
+                        # 미청산 포지션(profits에는 있지만 sell_dates에는 없음) 처리
+                        while len(dates) < len(eq):
+                            dates.append(close_prices.index[-1])
                         if len(dates) == len(eq):
                             ax.plot(dates, eq, label=f"{name} ({res['total_return']:.1%})",
                                     linewidth=1.5 + (0.5 if key == best_key else 0))
                         else:
-                            ax.plot(range(len(eq)), eq, label=f"{name} ({res['total_return']:.1%})",
+                            # 최종 폴백: 실제 데이터 기간을 균등 분할
+                            import numpy as np_local
+                            t_start = close_prices.index[0]
+                            t_end = close_prices.index[-1]
+                            dates = pd.date_range(t_start, t_end, periods=len(eq))
+                            ax.plot(dates, eq, label=f"{name} ({res['total_return']:.1%})",
                                     linewidth=1.5)
                     ax.axhline(y=1.0, color='gray', linewidth=0.5, linestyle=':')
-                    ax.set_title(f"{stock_display} 전략별 에쿼티 커브 비교", fontsize=12, fontweight="bold")
+                    ax.set_title(f"{stock_display} 전략별 에쿼티 커브 비교 ({start_str} ~ {end_str})", fontsize=12, fontweight="bold")
                     ax.set_ylabel("누적 수익률")
                     ax.legend(fontsize=8, loc="upper left")
                     ax.grid(alpha=0.3)
-                    plt.tight_layout()
+                    fig.tight_layout()
                     # 에쿼티 커브를 result_container 안에 임베딩
                     try:
                         plt.close(fig)
@@ -2575,33 +2652,15 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
         threading.Thread(target=_run_compare, daemon=True).start()
 
-    compare_btn = tk.Button(btn_frame, text="모든 전략 비교", command=_compare_all_strategies)
-    compare_btn.pack(side=tk.LEFT, padx=5)
-    Tooltip(compare_btn, "모든 전략을 동시에 실행하여\n수익률/샤프비율/MDD를 비교합니다.")
+    analysis_menu.add_command(label="모든 전략 비교", command=_compare_all_strategies)
 
     def _run_sensitivity_analysis():
         """현재 전략의 핵심 파라미터를 그리드 탐색하여 수익률 히트맵 표시."""
         method = _get_method_key()
-        mode = bt_period_mode_var.get()
-        if mode == "absolute":
-            start_str = bt_start_date_entry.get().strip()
-            end_str = bt_end_date_entry.get().strip()
-        else:
-            value_text = period_value_entry.get().strip()
-            if not value_text.isdigit():
-                messagebox.showerror("오류", "기간 숫자를 입력하세요.")
-                return
-            value = int(value_text)
-            unit = _get_unit_key()
-            now = datetime.now()
-            if unit == 'd':
-                start = now - timedelta(days=value)
-            elif unit == 'mo':
-                start = now - timedelta(days=value * 30)
-            else:
-                start = now - timedelta(days=value * 365)
-            start_str = start.strftime('%Y-%m-%d')
-            end_str = now.strftime('%Y-%m-%d')
+        parsed = _parse_period()
+        if parsed is None:
+            return
+        start_str, end_str = parsed
 
         search_btn.config(state=tk.DISABLED)
 
@@ -2667,7 +2726,8 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                             handler = strategy_dispatch.get(method)
                             if handler:
                                 data_copy = data.copy()
-                                _, _, profs = handler(data_copy, data['Close'].copy())
+                                _res = handler(data_copy, data['Close'].copy())
+                                _, _, profs = _res[0], _res[1], _res[2]
                                 if profs:
                                     total_ret = (1 + pd.Series(profs)).prod() - 1
                                     results_grid[i, j] = total_ret * 100
@@ -2685,7 +2745,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
                 def _show_heatmap():
                     search_btn.config(state=tk.NORMAL)
-                    fig, ax = plt.subplots(figsize=(8, 6))
+                    fig = Figure(figsize=(8, 6)); ax = fig.add_subplot(111)
                     im = ax.imshow(results_grid, cmap='RdYlGn', aspect='auto')
                     ax.set_xticks(range(len(vals2)))
                     ax.set_yticks(range(len(vals1)))
@@ -2705,7 +2765,7 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
                     fig.colorbar(im, ax=ax, label="수익률 (%)")
                     name = STRATEGY_DISPLAY_NAMES.get(method, method)
                     ax.set_title(f"{stock_display} {name} 파라미터 민감도", fontsize=12, fontweight="bold")
-                    plt.tight_layout()
+                    fig.tight_layout()
                     # 히트맵을 result_container 안에 임베딩
                     _clear_result_area()
                     try:
@@ -2730,9 +2790,15 @@ def open_backtest_popup(stock, on_search_callback=None, app_state=None):
 
         threading.Thread(target=_run, daemon=True).start()
 
-    sensitivity_btn = tk.Button(btn_frame, text="민감도 분석", command=_run_sensitivity_analysis)
-    sensitivity_btn.pack(side=tk.LEFT, padx=5)
-    Tooltip(sensitivity_btn, "현재 전략의 핵심 파라미터를\n변경하며 수익률 히트맵을 표시합니다.\n과적합 여부를 시각적으로 확인할 수 있습니다.")
+    analysis_menu.add_command(label="민감도 분석", command=_run_sensitivity_analysis)
+
+    # 기술 차트
+    def _open_tech_chart():
+        import stock_monitor_gui
+        stock_monitor_gui.show_technical_chart(stock_display)
+
+    analysis_menu.add_separator()
+    analysis_menu.add_command(label="기술 차트", command=_open_tech_chart)
 
     # ── 종목 뉴스 버튼 ──
     def open_ticker_news_popup():

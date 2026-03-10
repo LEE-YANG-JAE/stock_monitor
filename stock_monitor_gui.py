@@ -700,11 +700,17 @@ def refresh_table_once():
     """Fetch data for all tickers and update table."""
     try:
         def _status(msg=None, **kwargs):
-            """Thread-safe status bar update."""
-            if threading.current_thread() is threading.main_thread():
+            """Thread-safe status bar update with forced UI refresh."""
+            def _update():
                 update_status_bar(msg, **kwargs)
+                try:
+                    app.root.update_idletasks()
+                except Exception:
+                    pass
+            if threading.current_thread() is threading.main_thread():
+                _update()
             else:
-                app.root.after(0, lambda: update_status_bar(msg, **kwargs))
+                app.root.after(0, _update)
 
         results = []
         completed = [0]  # mutable counter for closure
@@ -1657,6 +1663,14 @@ def _copy_to_clipboard(row_id):
 # ============================================================
 # Phase 11-1: Status bar
 # ============================================================
+def _hide_undo_btn():
+    """Hide undo button and refresh status bar."""
+    if hasattr(app, '_undo_btn') and app._undo_btn is not None:
+        app._undo_btn.destroy()
+        app._undo_btn = None
+    update_status_bar()
+
+
 def update_status_bar(message=None, undo=False):
     """Update the status bar with current state."""
     if not app.status_bar:
@@ -1680,20 +1694,26 @@ def update_status_bar(message=None, undo=False):
     # 종목 더블클릭 안내 (항상 표시)
     status_text += " | 종목 더블클릭: 백테스트/상세 보기"
 
-    for widget in app.status_bar.winfo_children():
-        widget.destroy()
-
-    tk.Label(app.status_bar, text=status_text, font=FONTS["small"], anchor="w").pack(side=tk.LEFT, padx=PADDING_SM)
+    # 라벨 재사용: 매번 destroy/recreate 대신 기존 라벨의 텍스트만 갱신
+    if not hasattr(app, '_status_label') or app._status_label is None:
+        app._status_label = tk.Label(app.status_bar, text=status_text, font=FONTS["small"], anchor="w")
+        app._status_label.pack(side=tk.LEFT, padx=PADDING_SM)
+    else:
+        app._status_label.config(text=status_text)
 
     # Phase 11-5: Undo button
     if undo and app.undo_ticker:
-        undo_btn = tk.Button(app.status_bar, text="되돌리기", command=undo_delete,
-                             font=FONTS["small"], fg=COLORS["accent"])
-        undo_btn.pack(side=tk.RIGHT, padx=PADDING_SM)
+        if not hasattr(app, '_undo_btn') or app._undo_btn is None:
+            app._undo_btn = tk.Button(app.status_bar, text="되돌리기", command=undo_delete,
+                                      font=FONTS["small"], fg=COLORS["accent"])
+            app._undo_btn.pack(side=tk.RIGHT, padx=PADDING_SM)
         # Auto-hide after 10 seconds
         if app.undo_timer:
             app.root.after_cancel(app.undo_timer)
-        app.undo_timer = app.root.after(10000, lambda: update_status_bar())
+        app.undo_timer = app.root.after(10000, lambda: _hide_undo_btn())
+    elif hasattr(app, '_undo_btn') and app._undo_btn is not None:
+        app._undo_btn.destroy()
+        app._undo_btn = None
 
 
 # ============================================================
@@ -1708,6 +1728,9 @@ def show_splash(root):
     splash.geometry(f"{width}x{height}+{x}+{y}")
     splash_label = tk.Label(splash, text="프로그램 로딩 중...", font=FONTS["title"])
     splash_label.pack(expand=True)
+    splash.attributes('-topmost', True)
+    splash.lift()
+    splash.focus_force()
     splash.update()
     return splash
 
@@ -2400,6 +2423,7 @@ def main():
 
     # Phase 10-1: Menu bar
     create_menu_bar(root)
+    splash.update()
 
     # Phase 10-3: Keyboard shortcuts
     bind_shortcuts(root)
@@ -2604,6 +2628,7 @@ def main():
     app.table.grid(row=0, column=0, sticky="nsew")
     vsb.grid(row=0, column=1, sticky="ns")
     hsb.grid(row=1, column=0, sticky="ew")
+    splash.update()
 
     # Phase 9-2: Column alignment
     col_config = {
@@ -2756,29 +2781,6 @@ def main():
     # 뉴스 패널
     app.news_panel = NewsPanel(paned, app_state=app)
     paned.add(app.news_panel, minsize=80, stretch="always")
-
-    # 사시 드래그 그립 표시 (═══ 핸들)
-    def _draw_sash_grip(event=None):
-        """PanedWindow 사시에 그립 핸들 그리기."""
-        try:
-            sash_y = paned.sash_coord(0)[1]
-            sash_h = 8  # sashwidth
-            # 기존 그립 삭제
-            for w in getattr(paned, '_grip_labels', []):
-                w.place_forget()
-                w.destroy()
-            grip = tk.Label(paned, text="⋯⋯⋯", font=("Arial", 6), fg="#888888",
-                            bg="#C0C0C0", cursor="sb_v_double_arrow")
-            grip.place(relx=0.5, y=sash_y, anchor="center")
-            grip.bind("<Button-1>", lambda e: None)  # 클릭 시 sash로 전달
-            grip.bind("<B1-Motion>", lambda e: paned.sash_place(0, 0, e.y_root - paned.winfo_rooty()))
-            paned._grip_labels = [grip]
-        except (tk.TclError, IndexError):
-            pass
-
-    paned.bind("<Configure>", _draw_sash_grip)
-    # sash 이동 시에도 그립 위치 업데이트
-    paned.bind("<ButtonRelease-1>", lambda e: paned.after(50, _draw_sash_grip))
 
     # Phase 11-1: Status bar
     app.status_bar = tk.Frame(root, relief=tk.SUNKEN, bd=1)
